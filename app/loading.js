@@ -1,0 +1,1 @@
+export default function RootLoading(){return (<div className='container py-10'>Loading…</div>);}

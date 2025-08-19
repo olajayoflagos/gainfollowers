@@ -1,0 +1,1 @@
+export default async function sitemap(){const b=process.env.NEXT_PUBLIC_BASE_URL||'http://localhost:3000';return [{url:b,changefreq:'weekly',priority:1},{url:`${b}/services`,changefreq:'daily',priority:.9},{url:`${b}/dashboard`,changefreq:'weekly',priority:.6}];}

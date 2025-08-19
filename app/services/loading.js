@@ -1,0 +1,1 @@
+export default function ServicesLoading(){return (<div className='container py-10'>Loading services…</div>);}
