@@ -1,4 +1,4 @@
-import { verifyIdToken, db } from '@/lib/firebaseAdmin';
+import { verifyIdToken, db } from '../../../../lib/firebaseAdmin';
 export async function GET(req) {
   try {
     const auth = req.headers.get('authorization') || '';

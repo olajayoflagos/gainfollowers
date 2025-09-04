@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import crypto from 'crypto';
-import { db } from '../../../lib/firebaseAdmin'; // adjust path if needed
+import { verifyIdToken, db } from '../../../../lib/firebaseAdmin'; // adjust path if needed
 
 export async function POST(req) {
   // Get raw text for signature check

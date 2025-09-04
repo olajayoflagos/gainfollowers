@@ -2,7 +2,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-import { verifyIdToken, db } from '../../../lib/firebaseAdmin';
+import { verifyIdToken, db } from '../../../../lib/firebaseAdmin';
 import axios from 'axios';
 
 export async function POST(req) {

@@ -4,7 +4,7 @@ export const revalidate = 0;
 
 //import { verifyIdToken } from '../../../lib/firebaseClientAuth'; // if you don't have this, see note below
 // If your verify lives in lib/firebaseAdmin.js (lazy initializer), then do:
-import { verifyIdToken } from '../../../lib/firebaseAdmin';
+import { verifyIdToken, db } from '../../../../lib/firebaseAdmin';
 
 export async function POST(req) {
   try {

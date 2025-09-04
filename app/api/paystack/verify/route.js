@@ -2,7 +2,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-import { db } from '../../../lib/firebaseAdmin'; // uses db() -> Firestore
+import { verifyIdToken, db } from '../../../../lib/firebaseAdmin'; // uses db() -> Firestore
 
 export async function POST(req) {
   try {

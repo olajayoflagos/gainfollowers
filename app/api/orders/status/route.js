@@ -1,4 +1,4 @@
-import { verifyIdToken } from '@/lib/firebaseAdmin';
+import { verifyIdToken, db } from '../../../../lib/firebaseAdmin';
 import axios from 'axios';
 export async function POST(req) {
   try {
