@@ -2,7 +2,9 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-import { verifyIdToken } from '../../../lib/firebaseAdmin'; // adjust path if needed
+//import { verifyIdToken } from '../../../lib/firebaseClientAuth'; // if you don't have this, see note below
+// If your verify lives in lib/firebaseAdmin.js (lazy initializer), then do:
+import { verifyIdToken } from '../../../lib/firebaseAdmin';
 
 export async function POST(req) {
   try {
@@ -15,7 +17,6 @@ export async function POST(req) {
       return Response.json({ error: 'Invalid amount' }, { status: 400 });
     }
 
-    // Create a site-specific reference (helps when sharing one Paystack across projects)
     const ref = `GF_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     const body = {
@@ -23,15 +24,17 @@ export async function POST(req) {
       amount: Math.round(Number(amount) * 100), // kobo
       reference: ref,
       metadata: { uid: user.uid, email: user.email, site: 'gainfollowers' },
-      callback_url: callbackUrl || (process.env.NEXT_PUBLIC_BASE_URL
-        ? `${process.env.NEXT_PUBLIC_BASE_URL}/paystack/callback`
-        : undefined),
+      callback_url:
+        callbackUrl ||
+        (process.env.NEXT_PUBLIC_BASE_URL
+          ? `${process.env.NEXT_PUBLIC_BASE_URL}/paystack/callback`
+          : undefined),
     };
 
     const psRes = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`, // server secret
+        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),

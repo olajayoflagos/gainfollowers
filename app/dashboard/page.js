@@ -3,11 +3,10 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
-import { initFirebase } from '../../lib/firebaseClient'; // <= relative path (no "@/lib")
+import { initFirebase } from '../../lib/firebaseClient';
 import NavBar from '../components/NavBar';
 import WhatsAppButton from '../components/WhatsAppButton';
 
-// ---- Minimal inline UI helpers (so we don't depend on your custom components) ----
 function Spinner({ label = 'Loading…' }) {
   return (
     <div className="container py-12 text-center">
@@ -29,7 +28,6 @@ function Toast({ text, type }) {
       : 'bg-gray-900 text-white';
   return <div className={`${base} ${tone}`}>{text}</div>;
 }
-// ---------------------------------------------------------------------------------
 
 export default function Dashboard() {
   const [user, setUser] = useState(null);
@@ -37,6 +35,8 @@ export default function Dashboard() {
 
   const [wallet, setWallet] = useState(0);
   const [services, setServices] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [loadingTx, setLoadingTx] = useState(true);
 
   const [amount, setAmount] = useState('');
   const [order, setOrder] = useState({ service: '', link: '', quantity: '' });
@@ -47,13 +47,11 @@ export default function Dashboard() {
   const [orders, setOrders] = useState([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
 
-  // Searchable service dropdown
   const [search, setSearch] = useState('');
   const [openList, setOpenList] = useState(false);
   const listRef = useRef(null);
   const inputRef = useRef(null);
 
-  // --- NGN estimate (reads NEXT_PUBLIC_* only so build doesn't break) ---
   const computeEstimate = (svcId, qty) => {
     if (!svcId || !qty) return 0;
     const svc = (services || []).find((s) => String(s.service) === String(svcId));
@@ -64,100 +62,86 @@ export default function Dashboard() {
     const price = (usdPer1k * (Number(qty) / 1000)) * rate * (1 + margin / 100);
     return Math.ceil(price);
   };
-  useEffect(() => {
-    setEstimate(computeEstimate(order.service, order.quantity));
-  }, [order, services]); // eslint-disable-line
+  useEffect(() => setEstimate(computeEstimate(order.service, order.quantity)), [order, services]);
 
-  // --- Boot: auth + fetch wallet/services, then start polling orders ---
   useEffect(() => {
     initFirebase();
     const auth = getAuth();
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
-      if (!u) {
-        setLoadingBoot(false);
-        return;
-      }
+      if (!u) { setLoadingBoot(false); return; }
       try {
         const [w, s] = await Promise.all([
-          fetch('/api/user/me', {
-            headers: { Authorization: `Bearer ${await u.getIdToken()}` },
-          }).then((r) => r.json()),
-          fetch('/api/jap/services').then((r) => r.json()),
+          fetch('/api/user/me', { headers: { Authorization: `Bearer ${await u.getIdToken()}` } }).then(r=>r.json()),
+          fetch('/api/jap/services').then(r=>r.json()),
         ]);
         setWallet(Number(w?.balance || 0));
         setServices(Array.isArray(s) ? s : []);
-        if (!s || !s.length) {
-          setToast({ text: 'Could not load services. Check JAP_API_KEY.', type: 'error' });
-        }
-      } catch (e) {
-        setToast({ text: 'Failed to load data.', type: 'error' });
-      } finally {
-        setLoadingBoot(false);
-      }
+        if (!s || !s.length) setToast({ text: 'Could not load services. Check JAP_API_KEY.', type: 'error' });
+      } catch { setToast({ text: 'Failed to load data.', type: 'error' }); }
+      finally { setLoadingBoot(false); }
+
       refreshOrders();
-      const id = setInterval(refreshOrders, 15000);
-      return () => clearInterval(id);
+      refreshHistory();
+      const id1 = setInterval(refreshOrders, 15000);
+      const id2 = setInterval(refreshHistory, 20000);
+      return () => { clearInterval(id1); clearInterval(id2); };
     });
     return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshOrders = async () => {
     try {
       setLoadingOrders(true);
-      const auth = getAuth();
-      const cu = auth.currentUser;
-      if (!cu) return; // guard if auth not ready
+      const cu = getAuth().currentUser;
+      if (!cu) return;
       const token = await cu.getIdToken();
-      const res = await fetch('/api/orders/my', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch('/api/orders/my', { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       setOrders(Array.isArray(data?.items) ? data.items : []);
-    } catch {
-      // silent
-    } finally {
-      setLoadingOrders(false);
-    }
+    } finally { setLoadingOrders(false); }
+  };
+
+  const refreshHistory = async () => {
+    try {
+      setLoadingTx(true);
+      const cu = getAuth().currentUser;
+      if (!cu) return;
+      const token = await cu.getIdToken();
+      const res = await fetch('/api/wallet/history', { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      setTransactions(Array.isArray(data?.items) ? data.items : []);
+      // also refresh wallet balance so it reflects new credits
+      const w = await fetch('/api/user/me', { headers: { Authorization: `Bearer ${token}` } }).then(r=>r.json());
+      setWallet(Number(w?.balance || 0));
+    } finally { setLoadingTx(false); }
   };
 
   const fund = async () => {
     if (!amount) return;
     try {
-      const auth = getAuth();
-      const cu = auth.currentUser;
+      const cu = getAuth().currentUser;
       if (!cu) return setToast({ text: 'Please log in again.', type: 'error' });
       const token = await cu.getIdToken();
-
-      // >>> IMPORTANT: include callbackUrl so we can verify & credit without webhook
       const callbackUrl = `${window.location.origin}/paystack/callback`;
-
       const res = await fetch('/api/paystack/initialize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ amount: Number(amount), callbackUrl }),
       });
       const data = await res.json();
-      if (data?.authorization_url) {
-        window.location.href = data.authorization_url;
-      } else {
-        setToast({ text: 'Unable to initialize payment.', type: 'error' });
-      }
-    } catch {
-      setToast({ text: 'Payment init failed.', type: 'error' });
-    }
+      if (data?.authorization_url) window.location.href = data.authorization_url;
+      else setToast({ text: 'Unable to initialize payment.', type: 'error' });
+    } catch { setToast({ text: 'Payment init failed.', type: 'error' }); }
   };
 
   const placeOrder = async (e) => {
     e.preventDefault();
     if (!order.service) return setToast({ text: 'Please select a service.', type: 'error' });
     try {
-      const auth = getAuth();
-      const cu = auth.currentUser;
+      const cu = getAuth().currentUser;
       if (!cu) return setToast({ text: 'Please log in again.', type: 'error' });
       const token = await cu.getIdToken();
-
       const res = await fetch('/api/orders/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -169,37 +153,27 @@ export default function Dashboard() {
         setOrder({ service: '', link: '', quantity: '' });
         setSearch('');
         refreshOrders();
-      } else {
-        setToast({ text: data?.error || 'Failed to place order.', type: 'error' });
-      }
-    } catch {
-      setToast({ text: 'Order request failed.', type: 'error' });
-    }
+        refreshHistory(); // show debit immediately
+      } else setToast({ text: data?.error || 'Failed to place order.', type: 'error' });
+    } catch { setToast({ text: 'Order request failed.', type: 'error' }); }
   };
 
-  // Filter services for the dropdown
   const filtered = useMemo(() => {
     const term = (search || '').toLowerCase();
     const list = services || [];
     if (!term) return list.slice(0, 20);
-    return list
-      .filter((s) => (s.name + ' ' + s.category).toLowerCase().includes(term))
-      .slice(0, 30);
+    return list.filter(s => (s.name + ' ' + s.category).toLowerCase().includes(term)).slice(0, 30);
   }, [search, services]);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const onDoc = (e) => {
       if (!listRef.current || !inputRef.current) return;
-      if (!listRef.current.contains(e.target) && !inputRef.current.contains(e.target)) {
-        setOpenList(false);
-      }
+      if (!listRef.current.contains(e.target) && !inputRef.current.contains(e.target)) setOpenList(false);
     };
     document.addEventListener('click', onDoc);
     return () => document.removeEventListener('click', onDoc);
   }, []);
 
-  // ---- Loading / Not logged in states ----
   if (loadingBoot) return (<><NavBar/><Spinner label="Loading Dashboard…" /></>);
   if (!user) {
     return (
@@ -216,13 +190,11 @@ export default function Dashboard() {
     );
   }
 
-  // ---- Main UI ----
   return (
     <>
       <NavBar />
       <Toast {...toast} />
 
-      {/* subtle background glow */}
       <div className="relative">
         <div className="absolute inset-x-0 -z-10 h-40 bg-gradient-to-r from-brand/20 via-purple-300/30 to-brand/20 blur-2xl dark:from-brand/10 dark:to-brand/10" />
       </div>
@@ -254,7 +226,6 @@ export default function Dashboard() {
           <h5 className="font-semibold text-lg">Place an order</h5>
 
           <div className="mt-4 grid gap-3 md:grid-cols-3">
-            {/* Searchable picker */}
             <div className="md:col-span-3">
               <label className="text-sm text-gray-500">Search service</label>
               <div className="relative mt-1" ref={listRef}>
@@ -264,10 +235,7 @@ export default function Dashboard() {
                   className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent px-3 py-2"
                   onFocus={() => setOpenList(true)}
                   value={search}
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                    setOpenList(true);
-                  }}
+                  onChange={(e) => { setSearch(e.target.value); setOpenList(true); }}
                 />
                 {openList && (
                   <div className="absolute z-20 mt-1 max-h-80 w-full overflow-auto rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-lg">
@@ -278,17 +246,11 @@ export default function Dashboard() {
                       <button
                         key={s.service}
                         type="button"
-                        onClick={() => {
-                          setOrder((o) => ({ ...o, service: String(s.service) }));
-                          setSearch(`${s.name} — ${s.category}`);
-                          setOpenList(false);
-                        }}
+                        onClick={() => { setOrder((o) => ({ ...o, service: String(s.service) })); setSearch(`${s.name} — ${s.category}`); setOpenList(false); }}
                         className="w-full text-left px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 text-sm"
                       >
                         <div className="font-medium">{s.name}</div>
-                        <div className="text-xs text-gray-500">
-                          {s.category} • min {s.min} • max {s.max}
-                        </div>
+                        <div className="text-xs text-gray-500">{s.category} • min {s.min} • max {s.max}</div>
                       </button>
                     ))}
                   </div>
@@ -306,10 +268,7 @@ export default function Dashboard() {
 
             <input
               className="rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent px-3 py-2"
-              type="number"
-              min="1"
-              placeholder="Quantity"
-              required
+              type="number" min="1" placeholder="Quantity" required
               value={order.quantity}
               onChange={(e) => setOrder((o) => ({ ...o, quantity: e.target.value }))}
             />
@@ -317,9 +276,7 @@ export default function Dashboard() {
             <div className="md:col-span-3 flex items-center justify-between flex-wrap gap-3">
               <div className="text-sm text-gray-500">
                 Estimated price:&nbsp;
-                <span className="font-semibold text-gray-800 dark:text-gray-100">
-                  ₦{Number(estimate || 0).toLocaleString()}
-                </span>
+                <span className="font-semibold text-gray-800 dark:text-gray-100">₦{Number(estimate || 0).toLocaleString()}</span>
               </div>
               <button className="btn-primary" onClick={placeOrder}>Order</button>
             </div>
@@ -329,9 +286,7 @@ export default function Dashboard() {
               if (!s) return null;
               return (
                 <div className="md:col-span-3 mt-1 text-xs text-gray-500">
-                  <span className="inline-flex items-center gap-1 rounded-md border px-2 py-1 mr-2">
-                    {s.category}
-                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-md border px-2 py-1 mr-2">{s.category}</span>
                   Min: {s.min} • Max: {s.max}
                 </div>
               );
@@ -343,11 +298,8 @@ export default function Dashboard() {
         <section className="card p-5 md:p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <h5 className="font-semibold text-lg">Your recent orders</h5>
-            <button className="btn-outline" onClick={refreshOrders} disabled={loadingOrders}>
-              Refresh
-            </button>
+            <button className="btn-outline" onClick={refreshOrders} disabled={loadingOrders}>Refresh</button>
           </div>
-
           <div className="mt-3 overflow-x-auto">
             {loadingOrders ? (
               <Spinner label="Loading orders…" />
@@ -381,9 +333,48 @@ export default function Dashboard() {
             )}
           </div>
         </section>
+
+        {/* Transactions */}
+        <section className="card p-5 md:p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h5 className="font-semibold text-lg">Transactions</h5>
+            <button className="btn-outline" onClick={refreshHistory} disabled={loadingTx}>Refresh</button>
+          </div>
+          <div className="mt-3 overflow-x-auto">
+            {loadingTx ? (
+              <Spinner label="Loading transactions…" />
+            ) : transactions.length === 0 ? (
+              <div className="text-sm text-gray-500 px-2 py-6 text-center">No transactions yet.</div>
+            ) : (
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="text-left border-b border-gray-200 dark:border-gray-800">
+                    <th className="py-2 pr-4">Type</th>
+                    <th className="py-2 pr-4">Title</th>
+                    <th className="py-2 pr-4">Amount</th>
+                    <th className="py-2 pr-4">Ref/Order</th>
+                    <th className="py-2 pr-4">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transactions.map((t) => (
+                    <tr key={t.id} className="border-b border-gray-100 dark:border-gray-900">
+                      <td className="py-2 pr-4 capitalize">{t.type}</td>
+                      <td className="py-2 pr-4">{t.title}</td>
+                      <td className={`py-2 pr-4 ${t.type === 'credit' ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {t.type === 'credit' ? '+' : '-'} ₦{Number(t.amountNGN || 0).toLocaleString()}
+                      </td>
+                      <td className="py-2 pr-4">{t.reference || t.orderId || '-'}</td>
+                      <td className="py-2 pr-4">{t.createdAt?.slice(0,19).replace('T',' ')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </section>
       </div>
 
-      {/* Floating WhatsApp Contact */}
       <WhatsAppButton />
     </>
   );
