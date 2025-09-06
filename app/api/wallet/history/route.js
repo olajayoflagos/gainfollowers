@@ -1,56 +1,53 @@
-// app/api/wallet/history/route.js
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { verifyIdToken, db } from '../../../../lib/firebaseAdmin';
 
+function getBearer(req) {
+  const h = req.headers.get('authorization') || req.headers.get('Authorization') || '';
+  const m = h.match(/Bearer\s+(.+)/i);
+  return m ? m[1] : '';
+}
+
 export async function GET(req) {
   try {
-    const auth = req.headers.get('authorization') || '';
-    const idToken = auth.split('Bearer ')[1];
-    const user = await verifyIdToken(idToken);
+    const idToken = getBearer(req);
+    if (!idToken) return Response.json({ error: 'missing_token' }, { status: 401 });
 
-    const creditsQ = await db()
+    let user;
+    try { user = await verifyIdToken(idToken); }
+    catch { return Response.json({ error: 'invalid_token' }, { status: 401 }); }
+
+    const creditsSnap = await db()
       .collection('wallet_credits')
       .where('uid', '==', user.uid)
-      .orderBy('createdAt', 'desc')
-      .limit(50)
+      .limit(100)
       .get();
 
-    const debitsQ = await db()
+    const debitsSnap = await db()
       .collection('wallet_debits')
       .where('uid', '==', user.uid)
-      .orderBy('createdAt', 'desc')
-      .limit(50)
+      .limit(100)
       .get();
 
-    const credits = creditsQ.docs.map(d => ({
+    const mapDoc = (d, type) => ({
       id: d.id,
-      type: 'credit',
-      amountNGN: d.data().amountNGN || 0,
-      createdAt: d.data().createdAt,
-      reference: d.id,
-      title: 'Wallet top-up',
-      source: d.data().source || 'verify/webhook',
-    }));
+      type,
+      title: type === 'credit' ? 'Wallet top-up' : 'Service order',
+      amountNGN: Number(d.data().amountNGN || 0),
+      reference: d.data().reference || null,
+      orderId: d.data().orderId || null,
+      createdAt: d.data().createdAt || null,
+    });
 
-    const debits = debitsQ.docs.map(d => ({
-      id: d.id,
-      type: 'debit',
-      amountNGN: d.data().amountNGN || 0,
-      createdAt: d.data().createdAt,
-      orderId: d.data().orderId,
-      title: `Order #${d.data().orderId}`,
-      source: d.data().source || 'order',
-    }));
-
-    const items = [...credits, ...debits]
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      .slice(0, 100);
+    const items = [
+      ...creditsSnap.docs.map(d => mapDoc(d, 'credit')),
+      ...debitsSnap.docs.map(d => mapDoc(d, 'debit')),
+    ].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 
     return Response.json({ items });
-  } catch {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  } catch (e) {
+    return Response.json({ error: 'server_error', detail: String(e?.message || e) }, { status: 500 });
   }
 }

@@ -39,6 +39,8 @@ export default function Dashboard() {
   const [loadingTx, setLoadingTx] = useState(true);
 
   const [amount, setAmount] = useState('');
+  const [funding, setFunding] = useState(false);
+
   const [order, setOrder] = useState({ service: '', link: '', quantity: '' });
   const [estimate, setEstimate] = useState(0);
 
@@ -52,11 +54,12 @@ export default function Dashboard() {
   const listRef = useRef(null);
   const inputRef = useRef(null);
 
+  // --- Estimate in NGN (client-only envs so build won't break) ---
   const computeEstimate = (svcId, qty) => {
     if (!svcId || !qty) return 0;
     const svc = (services || []).find((s) => String(s.service) === String(svcId));
     if (!svc) return 0;
-    const rate = Number(process.env.NEXT_PUBLIC_USD_NGN_RATE || 1600);
+    const rate = Number(process.env.NEXT_PUBLIC_USD_NGN_RATE || 1700);
     const margin = Number(process.env.NEXT_PUBLIC_MARGIN_PERCENT || 20);
     const usdPer1k = Number(svc.rate || 0);
     const price = (usdPer1k * (Number(qty) / 1000)) * rate * (1 + margin / 100);
@@ -64,22 +67,28 @@ export default function Dashboard() {
   };
   useEffect(() => setEstimate(computeEstimate(order.service, order.quantity)), [order, services]);
 
+  // --- Boot: auth + fetch initial data ---
   useEffect(() => {
     initFirebase();
     const auth = getAuth();
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (!u) { setLoadingBoot(false); return; }
+
       try {
+        const token = await u.getIdToken(true); // fresh id token
         const [w, s] = await Promise.all([
-          fetch('/api/user/me', { headers: { Authorization: `Bearer ${await u.getIdToken()}` } }).then(r=>r.json()),
+          fetch('/api/user/me', { headers: { Authorization: `Bearer ${token}` } }).then(r=>r.json()),
           fetch('/api/jap/services').then(r=>r.json()),
         ]);
         setWallet(Number(w?.balance || 0));
         setServices(Array.isArray(s) ? s : []);
         if (!s || !s.length) setToast({ text: 'Could not load services. Check JAP_API_KEY.', type: 'error' });
-      } catch { setToast({ text: 'Failed to load data.', type: 'error' }); }
-      finally { setLoadingBoot(false); }
+      } catch {
+        setToast({ text: 'Failed to load data.', type: 'error' });
+      } finally {
+        setLoadingBoot(false);
+      }
 
       refreshOrders();
       refreshHistory();
@@ -95,7 +104,7 @@ export default function Dashboard() {
       setLoadingOrders(true);
       const cu = getAuth().currentUser;
       if (!cu) return;
-      const token = await cu.getIdToken();
+      const token = await cu.getIdToken(true);
       const res = await fetch('/api/orders/my', { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       setOrders(Array.isArray(data?.items) ? data.items : []);
@@ -107,7 +116,7 @@ export default function Dashboard() {
       setLoadingTx(true);
       const cu = getAuth().currentUser;
       if (!cu) return;
-      const token = await cu.getIdToken();
+      const token = await cu.getIdToken(true);
       const res = await fetch('/api/wallet/history', { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       setTransactions(Array.isArray(data?.items) ? data.items : []);
@@ -117,22 +126,39 @@ export default function Dashboard() {
     } finally { setLoadingTx(false); }
   };
 
+  // --- Funding (with clear message if amount missing) ---
   const fund = async () => {
-    if (!amount) return;
+    const amt = Number(amount);
+    if (!amt || amt <= 0) {
+      setToast({ text: 'Enter an amount (e.g. ₦500) before tapping Fund.', type: 'error' });
+      return;
+    }
     try {
+      setFunding(true);
       const cu = getAuth().currentUser;
-      if (!cu) return setToast({ text: 'Please log in again.', type: 'error' });
-      const token = await cu.getIdToken();
+      if (!cu) { setToast({ text: 'Please log in again.', type: 'error' }); return; }
+
+      const token = await cu.getIdToken(true); // fresh token
       const callbackUrl = `${window.location.origin}/paystack/callback`;
+
       const res = await fetch('/api/paystack/initialize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ amount: Number(amount), callbackUrl }),
+        body: JSON.stringify({ amount: amt, callbackUrl }),
       });
       const data = await res.json();
-      if (data?.authorization_url) window.location.href = data.authorization_url;
-      else setToast({ text: 'Unable to initialize payment.', type: 'error' });
-    } catch { setToast({ text: 'Payment init failed.', type: 'error' }); }
+
+      if (data?.authorization_url) {
+        try { localStorage.setItem('ps_ref', data.reference || ''); } catch {}
+        window.location.href = data.authorization_url;
+      } else {
+        setToast({ text: data?.error || 'Unable to initialize payment.', type: 'error' });
+      }
+    } catch {
+      setToast({ text: 'Payment init failed. Please try again.', type: 'error' });
+    } finally {
+      setFunding(false);
+    }
   };
 
   const placeOrder = async (e) => {
@@ -141,7 +167,7 @@ export default function Dashboard() {
     try {
       const cu = getAuth().currentUser;
       if (!cu) return setToast({ text: 'Please log in again.', type: 'error' });
-      const token = await cu.getIdToken();
+      const token = await cu.getIdToken(true);
       const res = await fetch('/api/orders/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -158,6 +184,7 @@ export default function Dashboard() {
     } catch { setToast({ text: 'Order request failed.', type: 'error' }); }
   };
 
+  // Search filtering
   const filtered = useMemo(() => {
     const term = (search || '').toLowerCase();
     const list = services || [];
@@ -165,6 +192,7 @@ export default function Dashboard() {
     return list.filter(s => (s.name + ' ' + s.category).toLowerCase().includes(term)).slice(0, 30);
   }, [search, services]);
 
+  // Close dropdown on outside click
   useEffect(() => {
     const onDoc = (e) => {
       if (!listRef.current || !inputRef.current) return;
@@ -195,6 +223,7 @@ export default function Dashboard() {
       <NavBar />
       <Toast {...toast} />
 
+      {/* subtle background glow */}
       <div className="relative">
         <div className="absolute inset-x-0 -z-10 h-40 bg-gradient-to-r from-brand/20 via-purple-300/30 to-brand/20 blur-2xl dark:from-brand/10 dark:to-brand/10" />
       </div>
@@ -206,16 +235,26 @@ export default function Dashboard() {
             <div>
               <h5 className="font-semibold text-lg">Wallet balance</h5>
               <p className="text-4xl mt-1 tracking-tight">₦{Number(wallet).toLocaleString()}</p>
+              <p className="text-xs text-gray-500 mt-1">Enter an amount, then click <span className="font-medium">Fund</span>.</p>
             </div>
             <div className="w-full sm:w-auto flex gap-2">
               <input
                 className="flex-1 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent px-3 py-2"
                 type="number"
+                inputMode="numeric"
+                min="1"
                 placeholder="Amount (NGN)"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
               />
-              <button className="btn-primary whitespace-nowrap" onClick={fund}>Fund</button>
+              <button
+                className="btn-primary whitespace-nowrap disabled:opacity-60"
+                onClick={fund}
+                disabled={funding || !amount || Number(amount) <= 0}
+                title={!amount || Number(amount) <= 0 ? 'Enter an amount first' : 'Fund wallet'}
+              >
+                {funding ? 'Please wait…' : 'Fund'}
+              </button>
             </div>
           </div>
           <a className="btn-link mt-3 inline-block" href="/profile">Profile</a>
