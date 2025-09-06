@@ -6,11 +6,13 @@ module.exports = {
     extend: {
       colors: {
         brand: {
-          DEFAULT: '#6f42c1',
-          600: '#5b34a0'
-        }
-      }
-    }
+          DEFAULT: '#7C3AED', // violet-600
+        },
+      },
+      borderRadius: {
+        '2xl': '1rem',
+      },
+    },
   },
-  plugins: []
+  plugins: [],
 };

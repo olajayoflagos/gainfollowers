@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="100" ry="100" fill="#6b46c1"></rect>
+  <path d="M120 300 L200 200 L300 320 L400 160" stroke="white" stroke-width="40" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+  <text x="50%" y="90%" dominant-baseline="middle" text-anchor="middle" font-size="70" fill="white" font-family="Arial">Gainfollowers</text>
+</svg>
