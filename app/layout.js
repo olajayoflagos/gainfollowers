@@ -54,7 +54,7 @@ export const metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    site: '@gainfollowers',
+    creator: '@gainfollowers',
     title: 'Gainfollowers | SMM Panel for Instagram, TikTok, X (Twitter), Facebook',
     description:
       'Buy followers, likes, and views securely with Paystack. NGN wallet, real-time orders, JAP auto-fulfillment.',

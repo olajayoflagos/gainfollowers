@@ -3,7 +3,7 @@
 export default function WhatsAppButton() {
   return (
     <a
-      href="https://wa.me/2348114879899?text=Hello%20Gainfollowers%2C%20I%20need%20help"
+      href="https://wa.me/2348114879899?text=Hello%20Gainfollowers"
       target="_blank"
       rel="noopener noreferrer"
       className="fixed z-40 bottom-4 right-4 md:bottom-6 md:right-6 rounded-full shadow-lg bg-[#25D366] hover:opacity-90 transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#25D366]"

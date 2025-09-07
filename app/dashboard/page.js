@@ -29,17 +29,6 @@ function Toast({ text, type }) {
   return <div className={`${base} ${tone}`}>{text}</div>;
 }
 
-// ---- helpers ----
-const toNGN = (n) =>
-  `₦${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-
-function useRates() {
-  // read NEXT_PUBLIC_* so build doesn’t break on client
-  const rate = Number(process.env.NEXT_PUBLIC_USD_NGN_RATE || 1700);
-  const margin = Number(process.env.NEXT_PUBLIC_MARGIN_PERCENT || 20);
-  return { rate, margin, mul: rate * (1 + margin / 100) };
-}
-
 export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [loadingBoot, setLoadingBoot] = useState(true);
@@ -65,38 +54,18 @@ export default function Dashboard() {
   const listRef = useRef(null);
   const inputRef = useRef(null);
 
-  const { mul } = useRates();
-
-  // find selected service
-  const selected = useMemo(
-    () => (services || []).find((s) => String(s.service) === String(order.service)),
-    [services, order.service]
-  );
-
   // --- Estimate in NGN (client-only envs so build won't break) ---
-  const computeEstimate = (svc, qty) => {
-    const q = Number(qty || 0);
-    if (!svc || !q) return 0;
+  const computeEstimate = (svcId, qty) => {
+    if (!svcId || !qty) return 0;
+    const svc = (services || []).find((s) => String(s.service) === String(svcId));
+    if (!svc) return 0;
+    const rate = Number(process.env.NEXT_PUBLIC_USD_NGN_RATE || 1700);
+    const margin = Number(process.env.NEXT_PUBLIC_MARGIN_PERCENT || 20);
     const usdPer1k = Number(svc.rate || 0);
-    const price = (usdPer1k * (q / 1000)) * mul;
+    const price = (usdPer1k * (Number(qty) / 1000)) * rate * (1 + margin / 100);
     return Math.ceil(price);
   };
-
-  // keep estimate up to date
-  useEffect(() => {
-    setEstimate(computeEstimate(selected, order.quantity));
-  }, [order, selected]); // eslint-disable-line
-
-  // clamp quantity to min/max when service changes
-  useEffect(() => {
-    if (!selected) return;
-    setOrder((o) => {
-      const q = Number(o.quantity || 0);
-      if (!q) return o;
-      const clamped = Math.min(Math.max(q, Number(selected.min || 1)), Number(selected.max || q));
-      return clamped !== q ? { ...o, quantity: String(clamped) } : o;
-    });
-  }, [selected]);
+  useEffect(() => setEstimate(computeEstimate(order.service, order.quantity)), [order, services]);
 
   // --- Boot: auth + fetch initial data ---
   useEffect(() => {
@@ -195,15 +164,6 @@ export default function Dashboard() {
   const placeOrder = async (e) => {
     e.preventDefault();
     if (!order.service) return setToast({ text: 'Please select a service.', type: 'error' });
-    const qty = Number(order.quantity || 0);
-    if (!qty) return setToast({ text: 'Enter a quantity.', type: 'error' });
-    if (selected) {
-      const min = Number(selected.min || 1);
-      const max = Number(selected.max || qty);
-      if (qty < min || qty > max) {
-        return setToast({ text: `Quantity must be between ${min} and ${max}.`, type: 'error' });
-      }
-    }
     try {
       const cu = getAuth().currentUser;
       if (!cu) return setToast({ text: 'Please log in again.', type: 'error' });
@@ -242,18 +202,6 @@ export default function Dashboard() {
     return () => document.removeEventListener('click', onDoc);
   }, []);
 
-  const canOrder =
-    !!order.service &&
-    !!order.link &&
-    !!Number(order.quantity || 0) &&
-    (!selected ||
-      (Number(order.quantity) >= Number(selected.min || 1) &&
-       Number(order.quantity) <= Number(selected.max || Number(order.quantity))));
-
-  // pre-compute hints for selected service
-  const per1k = selected ? Math.round(Number(selected.rate || 0) * mul) : 0;
-  const per10 = selected ? Math.round(per1k * (10 / 1000)) : 0;
-
   if (loadingBoot) return (<><NavBar/><Spinner label="Loading Dashboard…" /></>);
   if (!user) {
     return (
@@ -286,10 +234,8 @@ export default function Dashboard() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
               <h5 className="font-semibold text-lg">Wallet balance</h5>
-              <p className="text-4xl mt-1 tracking-tight">{toNGN(wallet)}</p>
-              <p className="text-xs text-gray-500 mt-1">
-                Enter an amount, then click <span className="font-medium">Fund</span>.
-              </p>
+              <p className="text-4xl mt-1 tracking-tight">₦{Number(wallet).toLocaleString()}</p>
+              <p className="text-xs text-gray-500 mt-1">Enter an amount, then click <span className="font-medium">Fund</span>.</p>
             </div>
             <div className="w-full sm:w-auto flex gap-2">
               <input
@@ -319,7 +265,6 @@ export default function Dashboard() {
           <h5 className="font-semibold text-lg">Place an order</h5>
 
           <div className="mt-4 grid gap-3 md:grid-cols-3">
-            {/* Searchable picker */}
             <div className="md:col-span-3">
               <label className="text-sm text-gray-500">Search service</label>
               <div className="relative mt-1" ref={listRef}>
@@ -340,17 +285,11 @@ export default function Dashboard() {
                       <button
                         key={s.service}
                         type="button"
-                        onClick={() => {
-                          setOrder((o) => ({ ...o, service: String(s.service) }));
-                          setSearch(`${s.name} — ${s.category}`);
-                          setOpenList(false);
-                        }}
+                        onClick={() => { setOrder((o) => ({ ...o, service: String(s.service) })); setSearch(`${s.name} — ${s.category}`); setOpenList(false); }}
                         className="w-full text-left px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 text-sm"
                       >
                         <div className="font-medium">{s.name}</div>
-                        <div className="text-xs text-gray-500">
-                          {s.category} • min {s.min} • max {s.max}
-                        </div>
+                        <div className="text-xs text-gray-500">{s.category} • min {s.min} • max {s.max}</div>
                       </button>
                     ))}
                   </div>
@@ -368,58 +307,29 @@ export default function Dashboard() {
 
             <input
               className="rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent px-3 py-2"
-              type="number"
-              min={selected ? Number(selected.min || 1) : 1}
-              max={selected ? Number(selected.max || 1000000) : undefined}
-              placeholder="Quantity"
-              required
+              type="number" min="1" placeholder="Quantity" required
               value={order.quantity}
-              onChange={(e) => {
-                let val = e.target.value;
-                if (selected) {
-                  const q = Number(val || 0);
-                  if (q) {
-                    const clamped = Math.min(
-                      Math.max(q, Number(selected.min || 1)),
-                      Number(selected.max || q)
-                    );
-                    val = String(clamped);
-                  }
-                }
-                setOrder((o) => ({ ...o, quantity: val }));
-              }}
+              onChange={(e) => setOrder((o) => ({ ...o, quantity: e.target.value }))}
             />
 
             <div className="md:col-span-3 flex items-center justify-between flex-wrap gap-3">
               <div className="text-sm text-gray-500">
                 Estimated price:&nbsp;
-                <span className="font-semibold text-gray-800 dark:text-gray-100">
-                  {toNGN(estimate || 0)}
-                </span>
+                <span className="font-semibold text-gray-800 dark:text-gray-100">₦{Number(estimate || 0).toLocaleString()}</span>
               </div>
-              <button className="btn-primary disabled:opacity-60" onClick={placeOrder} disabled={!canOrder}>
-                Order
-              </button>
+              <button className="btn-primary" onClick={placeOrder}>Order</button>
             </div>
 
-            {/* Selected service hints */}
-            {selected && (
-              <div className="md:col-span-3 mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
-                <span className="inline-flex items-center gap-1 rounded-md border px-2 py-1">
-                  {selected.category}
-                </span>
-                <span>Min: {selected.min}</span>
-                <span>•</span>
-                <span>Max: {selected.max}</span>
-                <span>•</span>
-                <span className="rounded-md bg-gray-100 px-2 py-0.5 dark:bg-gray-800">
-                  per 1k: {toNGN(per1k)}
-                </span>
-                <span className="rounded-md bg-gray-100 px-2 py-0.5 dark:bg-gray-800">
-                  per 10: {toNGN(per10)}
-                </span>
-              </div>
-            )}
+            {(() => {
+              const s = (services || []).find((x) => String(x.service) === String(order.service));
+              if (!s) return null;
+              return (
+                <div className="md:col-span-3 mt-1 text-xs text-gray-500">
+                  <span className="inline-flex items-center gap-1 rounded-md border px-2 py-1 mr-2">{s.category}</span>
+                  Min: {s.min} • Max: {s.max}
+                </div>
+              );
+            })()}
           </div>
         </section>
 
@@ -452,7 +362,7 @@ export default function Dashboard() {
                       <td className="py-2 pr-4">{o.orderId}</td>
                       <td className="py-2 pr-4">{o.service}</td>
                       <td className="py-2 pr-4">{o.quantity}</td>
-                      <td className="py-2 pr-4">{toNGN(o.priceNGN || 0)}</td>
+                      <td className="py-2 pr-4">₦{Number(o.priceNGN || 0).toLocaleString()}</td>
                       <td className="py-2 pr-4 capitalize">{o.status}</td>
                       <td className="py-2 pr-4">{o.createdAt?.slice(0, 19).replace('T', ' ')}</td>
                     </tr>
@@ -491,7 +401,7 @@ export default function Dashboard() {
                       <td className="py-2 pr-4 capitalize">{t.type}</td>
                       <td className="py-2 pr-4">{t.title}</td>
                       <td className={`py-2 pr-4 ${t.type === 'credit' ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {t.type === 'credit' ? '+' : '-'} {toNGN(t.amountNGN || 0)}
+                        {t.type === 'credit' ? '+' : '-'} ₦{Number(t.amountNGN || 0).toLocaleString()}
                       </td>
                       <td className="py-2 pr-4">{t.reference || t.orderId || '-'}</td>
                       <td className="py-2 pr-4">{t.createdAt?.slice(0,19).replace('T',' ')}</td>

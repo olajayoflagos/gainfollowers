@@ -60,8 +60,8 @@ export default function Home() {
             <div className="relative">
               <div className="absolute -inset-6 -z-10 rounded-3xl bg-gradient-to-tr from-violet-500/20 via-fuchsia-500/10 to-transparent blur-2xl" />
               <img
-                src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcShtAuQ6_hpcWS0qoBj0d-5AFuCJKZOC8dFYA&s"
-                alt="Creator checking analytics on a modern dashboard"
+                src="https://gainfollowers.vercel.app/og-banner.png"
+                alt="Gain Followers Banner"
                 width="1600"
                 height="1200"
                 loading="eager"
