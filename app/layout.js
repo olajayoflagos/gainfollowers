@@ -62,7 +62,7 @@ export const metadata = {
   },
   verification: {
     // Google Search Console
-    google: 'google-site-verification=_uMLmJq1iRcdK_XL0xbPFakZAzuyzEOKTpdsVUW7j7g',
+    google: '_uMLmJq1iRcdK_XL0xbPFakZAzuyzEOKTpdsVUW7j7g',
   },
   icons: {
     icon: [
