@@ -49,7 +49,7 @@ export const metadata = {
       'Boost your social media growth. Fund in NGN with Paystack, order likes/followers/views, and track orders in a sleek dashboard.',
     // Prefer a 1200x630 card (served by our /og route)
     images: [
-      { url: `${BASE}/og`, width: 1200, height: 630, alt: 'Gainfollowers' },
+      { url: `/og-banner.png`, width: 1200, height: 630, alt: 'Gainfollowers' },
     ],
   },
   twitter: {
@@ -58,7 +58,7 @@ export const metadata = {
     title: 'Gainfollowers | SMM Panel for Instagram, TikTok, X (Twitter), Facebook',
     description:
       'Buy followers, likes, and views securely with Paystack. NGN wallet, real-time orders, JAP auto-fulfillment.',
-    images: [`${BASE}/og`],
+    images: [`/og-banner.png`],
   },
   verification: {
     // Google Search Console

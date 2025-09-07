@@ -12,11 +12,7 @@ export async function GET(req) {
     searchParams.get('title') ||
     'Gainfollowers – SMM Panel for Instagram, TikTok, X (Twitter), Facebook';
 
-  // Your SVG logo in /public
   const logoURL = `${origin}/gainfollowers-logo.svg`;
-
-  // Load logo as ArrayBuffer
-  const logoData = await fetch(logoURL).then(r => r.arrayBuffer());
 
   return new ImageResponse(
     (
@@ -33,7 +29,6 @@ export async function GET(req) {
           position: 'relative',
         }}
       >
-        {/* Faint radial glow */}
         <div
           style={{
             position: 'absolute',
@@ -43,8 +38,6 @@ export async function GET(req) {
             opacity: 0.9,
           }}
         />
-
-        {/* Header: Logo + name */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -57,7 +50,6 @@ export async function GET(req) {
           <div style={{ fontSize: 36, fontWeight: 700 }}>Gainfollowers</div>
         </div>
 
-        {/* Title */}
         <div
           style={{
             marginTop: 32,
@@ -70,12 +62,10 @@ export async function GET(req) {
           {title}
         </div>
 
-        {/* Bullets */}
         <div style={{ marginTop: 28, fontSize: 28, opacity: 0.95 }}>
           Fund NGN wallet with Paystack • Place orders instantly • JAP auto-fulfillment
         </div>
 
-        {/* Footer */}
         <div style={{ marginTop: 'auto', fontSize: 24, opacity: 0.9 }}>
           gainfollowers.vercel.app
         </div>

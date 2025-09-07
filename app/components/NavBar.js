@@ -1,29 +1,68 @@
 'use client';
+
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { Bars3Icon, XMarkIcon, MoonIcon, SunIcon } from '@heroicons/react/24/outline';
 import { getAuth, onAuthStateChanged, signOut } from 'firebase/auth';
 import { initFirebase } from '@/lib/firebaseClient';
 
-function Avatar({ email }){
-  const letter = (email||'?').slice(0,1).toUpperCase();
-  return <div className="h-8 w-8 rounded-full bg-brand text-white flex items-center justify-center font-semibold">{letter}</div>;
+function Avatar({ email }) {
+  const letter = (email || '?').slice(0, 1).toUpperCase();
+  return (
+    <div
+      className="inline-flex h-8 w-8 select-none items-center justify-center rounded-full bg-brand text-white shadow-sm"
+      aria-hidden="true"
+    >
+      <span className="text-sm font-semibold">{letter}</span>
+    </div>
+  );
 }
 
 export default function NavBar() {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(false);     // mobile menu
+  const [menu, setMenu] = useState(false);     // avatar dropdown
   const [dark, setDark] = useState(false);
   const [user, setUser] = useState(null);
-  const [menu, setMenu] = useState(false);
-  const menuRef = useRef(null);
 
+  const menuRef = useRef(null);
+  const burgerRef = useRef(null);
+
+  // --- Boot: Firebase auth + theme
   useEffect(() => {
     initFirebase();
-    setDark(document.documentElement.classList.contains('dark'));
     const unsub = onAuthStateChanged(getAuth(), (u) => setUser(u));
-    const onDoc = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenu(false); };
+
+    // load preferred theme (localStorage -> system)
+    const stored = typeof window !== 'undefined' ? localStorage.getItem('theme') : null;
+    const prefersDark =
+      typeof window !== 'undefined' &&
+      window.matchMedia &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    const shouldDark = stored ? stored === 'dark' : prefersDark;
+    document.documentElement.classList.toggle('dark', shouldDark);
+    setDark(shouldDark);
+
+    // click-away
+    const onDoc = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenu(false);
+    };
+    // Escape closes menus
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        setMenu(false);
+        setOpen(false);
+        burgerRef.current?.focus();
+      }
+    };
     document.addEventListener('click', onDoc);
-    return () => { unsub(); document.removeEventListener('click', onDoc); };
+    document.addEventListener('keydown', onKey);
+
+    return () => {
+      unsub();
+      document.removeEventListener('click', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
   }, []);
 
   const toggleTheme = () => {
@@ -33,50 +72,163 @@ export default function NavBar() {
     localStorage.setItem('theme', next ? 'dark' : 'light');
     setDark(next);
   };
-  const logOut = async () => { await signOut(getAuth()); setOpen(false); setMenu(false); window.location.href='/'; };
+
+  const logOut = async () => {
+    await signOut(getAuth());
+    setOpen(false);
+    setMenu(false);
+    window.location.href = '/';
+  };
+
+  const NavLinks = ({ onClick }) => (
+    <>
+      <Link className="nav-link" href="/services" onClick={onClick}>
+        Services
+      </Link>
+      <Link className="nav-link" href="/dashboard" onClick={onClick}>
+        Dashboard
+      </Link>
+      <Link className="nav-link" href="/admin" onClick={onClick}>
+        Admin
+      </Link>
+    </>
+  );
 
   return (
-    <header className="sticky top-0 z-30 bg-white/70 dark:bg-gray-950/60 backdrop-blur border-b border-gray-200 dark:border-gray-800">
-      <div className="container h-14 flex items-center justify-between">
-        <Link href="/" className="font-semibold tracking-wide">Gainfollowers</Link>
-        <nav className="hidden md:flex gap-6 text-sm">
-          <Link className="hover:text-brand" href="/services">Services</Link>
-          <Link className="hover:text-brand" href="/dashboard">Dashboard</Link>
-          <Link className="hover:text-brand" href="/admin">Admin</Link>
+    <header className="sticky top-0 z-30 border-b border-gray-200 bg-white/70 backdrop-blur dark:border-gray-800 dark:bg-gray-950/60">
+      <div className="container flex h-14 items-center justify-between">
+        {/* Brand */}
+        <Link href="/" className="group inline-flex items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/gainfollowers-logo.svg"
+            alt="Gainfollowers"
+            width="28"
+            height="28"
+            className="rounded-md"
+          />
+          <span className="font-semibold tracking-wide group-hover:text-brand">Gainfollowers</span>
+        </Link>
+
+        {/* Desktop nav */}
+        <nav className="hidden items-center gap-6 text-sm md:flex">
+          <NavLinks />
         </nav>
+
+        {/* Right side actions */}
         <div className="flex items-center gap-2">
-          <button className="btn-outline h-9 px-3" onClick={toggleTheme} aria-label="Toggle theme">{dark ? <SunIcon className="h-5 w-5"/> : <MoonIcon className="h-5 w-5"/>}</button>
-          {!user ? (<>
-            <Link href="/login" className="hidden md:inline-flex btn-outline h-9">Log in</Link>
-            <Link href="/signup" className="hidden md:inline-flex btn-primary h-9">Sign up</Link>
-          </>) : (
+          <button
+            className="btn-outline h-9 px-3"
+            onClick={toggleTheme}
+            aria-label="Toggle theme"
+            title={dark ? 'Switch to light' : 'Switch to dark'}
+          >
+            {dark ? <SunIcon className="h-5 w-5" /> : <MoonIcon className="h-5 w-5" />}
+          </button>
+
+          {!user ? (
+            <>
+              <Link href="/login" className="btn-outline h-9 hidden md:inline-flex">
+                Log in
+              </Link>
+              <Link href="/signup" className="btn-primary h-9 hidden md:inline-flex">
+                Sign up
+              </Link>
+            </>
+          ) : (
             <div className="relative" ref={menuRef}>
-              <button onClick={()=>setMenu(v=>!v)} className="flex items-center gap-2"><Avatar email={user.email}/></button>
+              <button
+                onClick={() => setMenu((v) => !v)}
+                className="inline-flex items-center gap-2 rounded-lg p-1 hover:bg-gray-100 dark:hover:bg-gray-800"
+                aria-haspopup="menu"
+                aria-expanded={menu}
+                aria-label="Account menu"
+              >
+                <Avatar email={user.email} />
+              </button>
+
               {menu && (
-                <div className="absolute right-0 mt-2 w-48 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-lg p-1 text-sm">
-                  <div className="px-3 py-2 text-gray-500 truncate">{user.email}</div>
-                  <Link className="block px-3 py-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800" href="/dashboard" onClick={()=>setMenu(false)}>Dashboard</Link>
-                  <Link className="block px-3 py-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800" href="/profile" onClick={()=>setMenu(false)}>Profile</Link>
-                  <Link className="block px-3 py-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800" href="/admin" onClick={()=>setMenu(false)}>Admin</Link>
-                  <button className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800" onClick={logOut}>Log out</button>
+                <div
+                  role="menu"
+                  className="absolute right-0 mt-2 w-56 rounded-xl border border-gray-200 bg-white p-1 shadow-xl dark:border-gray-800 dark:bg-gray-900"
+                >
+                  <div className="px-3 py-2 text-xs text-gray-500">
+                    {user.email || 'Signed in'}
+                  </div>
+                  <Link
+                    role="menuitem"
+                    href="/dashboard"
+                    className="menu-item"
+                    onClick={() => setMenu(false)}
+                  >
+                    Dashboard
+                  </Link>
+                  <Link
+                    role="menuitem"
+                    href="/profile"
+                    className="menu-item"
+                    onClick={() => setMenu(false)}
+                  >
+                    Profile
+                  </Link>
+                  <Link
+                    role="menuitem"
+                    href="/admin"
+                    className="menu-item"
+                    onClick={() => setMenu(false)}
+                  >
+                    Admin
+                  </Link>
+                  <button role="menuitem" className="menu-item w-full text-left" onClick={logOut}>
+                    Log out
+                  </button>
                 </div>
               )}
             </div>
           )}
-          <button className="md:hidden p-2" onClick={()=>setOpen(v=>!v)} aria-label="Menu">{open ? <XMarkIcon className="h-6 w-6"/> : <Bars3Icon className="h-6 w-6"/>}</button>
+
+          {/* Burger */}
+          <button
+            ref={burgerRef}
+            className="p-2 md:hidden"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="Open menu"
+            aria-expanded={open}
+            aria-controls="mobile-menu"
+          >
+            {open ? <XMarkIcon className="h-6 w-6" /> : <Bars3Icon className="h-6 w-6" />}
+          </button>
         </div>
       </div>
+
+      {/* Mobile menu */}
       {open && (
-        <div className="md:hidden border-t border-gray-200 dark:border-gray-800">
-          <div className="container py-3 flex flex-col gap-3">
-            <Link onClick={()=>setOpen(false)} href="/services">Services</Link>
-            <Link onClick={()=>setOpen(false)} href="/dashboard">Dashboard</Link>
-            <Link onClick={()=>setOpen(false)} href="/admin">Admin</Link>
+        <div id="mobile-menu" className="md:hidden border-t border-gray-200 dark:border-gray-800">
+          <div className="container flex flex-col gap-3 py-3">
+            <NavLinks onClick={() => setOpen(false)} />
             <div className="flex gap-2">
-              {!user ? (<>
-                <Link href="/login" className="btn-outline h-9 flex-1" onClick={()=>setOpen(false)}>Log in</Link>
-                <Link href="/signup" className="btn-primary h-9 flex-1" onClick={()=>setOpen(false)}>Sign up</Link>
-              </>) : (<button className="btn-outline h-9 flex-1" onClick={logOut}>Log out</button>)}
+              {!user ? (
+                <>
+                  <Link
+                    href="/login"
+                    className="btn-outline h-9 flex-1"
+                    onClick={() => setOpen(false)}
+                  >
+                    Log in
+                  </Link>
+                  <Link
+                    href="/signup"
+                    className="btn-primary h-9 flex-1"
+                    onClick={() => setOpen(false)}
+                  >
+                    Sign up
+                  </Link>
+                </>
+              ) : (
+                <button className="btn-outline h-9 flex-1" onClick={logOut}>
+                  Log out
+                </button>
+              )}
             </div>
           </div>
         </div>
