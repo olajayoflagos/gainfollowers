@@ -1,56 +1,82 @@
 // app/layout.js
 import './globals.css';
 
+const BASE =
+  (process.env.NEXT_PUBLIC_BASE_URL || 'https://gainfollowers.vercel.app')
+    .replace(/\/$/, ''); // ensure no trailing slash
+
 export const metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || 'https://gainfollowers.vercel.app'),
+  metadataBase: new URL(BASE),
   title: {
-    default: 'Gainfollowers — SMM Panel for Instagram, TikTok, Twitter/X, Facebook',
+    default: 'Gainfollowers — SMM Panel for Instagram, TikTok, X (Twitter), Facebook',
     template: '%s · Gainfollowers',
   },
   description:
-    'Boost your Instagram, Twitter, and Facebook growth with Gainfollowers. Fund wallet in NGN, order likes, followers, views, and track everything in a sleek dashboard.',
-  icons: {
-    icon: '/favicon.ico',
-  },
+    'Gainfollowers is a fast, secure SMM panel for Instagram, TikTok, X (Twitter), Facebook, YouTube and more. Fund an NGN wallet via Paystack, place orders instantly, and track everything in a beautiful dashboard.',
   keywords: [
-    'SMM panel', 'Instagram followers', 'Instagram likes', 'TikTok followers',
-    'Twitter followers', 'Twitter/X likes', 'Facebook likes', 'YouTube views',
-    'Snapchat', 'Telegram', 'LinkedIn', 'cheap SMM', 'Paystack Nigeria',
-    'NGN wallet', 'social media growth', 'auto fulfilment', 'JAP API',
+    'SMM panel',
+    'Instagram followers', 'Instagram likes', 'Instagram views',
+    'TikTok followers', 'TikTok likes', 'TikTok views',
+    'Twitter followers', 'X followers', 'Twitter likes',
+    'Facebook likes', 'Facebook followers',
+    'YouTube views', 'YouTube subscribers',
+    'Telegram members', 'Discord members',
+    'Spotify plays', 'Apple Music streams', 'Audiomack',
+    'LinkedIn', 'Snapchat', 'Twitch',
+    'Website traffic',
+    'cheap SMM', 'Nigeria', 'Paystack', 'NGN wallet',
+    'auto fulfillment', 'JAP API', 'social media growth',
   ],
   alternates: { canonical: '/' },
   robots: {
-    index: true, follow: true,
-    googleBot: { index: true, follow: true, 'max-image-preview': 'large' },
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+      'max-video-preview': -1,
+    },
   },
   openGraph: {
-    title: 'Gainfollowers | Grow Faster on Instagram, Twitter & Facebook',
-    description:
-      'All-in-one SMM panel for Instagram, Twitter, and Facebook growth. Safe Paystack payments, fast auto-fulfillment, wallet tracking.',
-    url: 'https://gainfollowers.vercel.app',
-    siteName: 'Gainfollowers',
-    images: [
-      {
-        url: '/gainfollowers-logo.svg',
-        width: 512,
-        height: 512,
-        alt: 'Gainfollowers Logo',
-      },
-    ],
-    locale: 'en_US',
     type: 'website',
+    locale: 'en_US',
+    siteName: 'Gainfollowers',
+    url: BASE,
+    title: 'Gainfollowers | SMM Panel for Instagram, TikTok, X (Twitter), Facebook',
+    description:
+      'Boost your social media growth. Fund in NGN with Paystack, order likes/followers/views, and track orders in a sleek dashboard.',
+    // Prefer a 1200x630 card (served by our /og route)
+    images: [
+      { url: `${BASE}/og`, width: 1200, height: 630, alt: 'Gainfollowers' },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Gainfollowers | SMM Panel for Instagram, Twitter, Facebook',
+    site: '@gainfollowers',
+    title: 'Gainfollowers | SMM Panel for Instagram, TikTok, X (Twitter), Facebook',
     description:
-      'Buy followers, likes, and views on Instagram, Twitter, Facebook securely. Fund with Paystack and track in your NGN wallet.',
-    images: ['/gainfollowers-logo.svg'],
+      'Buy followers, likes, and views securely with Paystack. NGN wallet, real-time orders, JAP auto-fulfillment.',
+    images: [`${BASE}/og`],
   },
-  // Put your Google Search Console token here
   verification: {
+    // Google Search Console
     google: '_uMLmJq1iRcdK_XL0xbPFakZAzuyzEOKTpdsVUW7j7g',
   },
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/gainfollowers-32x32.png', sizes: '32x32', type: 'image/png' }, // optional if you add it later
+      { url: '/gainfollowers-16x16.png', sizes: '16x16', type: 'image/png' }, // optional
+      { url: '/gainfollowers-logo.svg', type: 'image/svg+xml' },
+    ],
+    apple: [
+      { url: '/gainfollowers-192x192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/gainfollowers-512x512.png', sizes: '512x512', type: 'image/png' },
+    ],
+  },
+  category: 'technology',
 };
 
 export default function RootLayout({ children }) {
