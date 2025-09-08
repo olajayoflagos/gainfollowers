@@ -1,7 +1,9 @@
+// app/api/orders/status/route.js
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+import admin from 'firebase-admin';
 import { verifyIdToken, db } from '../../../../lib/firebaseAdmin';
 
 function getBearer(req) {
@@ -17,7 +19,6 @@ async function japStatus(japOrderId) {
   form.set('action', 'status');
   form.set('order', String(japOrderId));
 
-  // 10s timeout
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), 10_000);
 
@@ -31,9 +32,7 @@ async function japStatus(japOrderId) {
     });
     text = await res.text();
     try { data = JSON.parse(text); } catch { data = null; }
-  } finally {
-    clearTimeout(t);
-  }
+  } finally { clearTimeout(t); }
 
   if (!res.ok || !data) {
     const msg = (data && (data.error || data.message)) || text || `JAP status failed (${res.status})`;
@@ -46,7 +45,6 @@ async function japStatus(japOrderId) {
 
 export async function POST(req) {
   try {
-    // ---- Auth ----
     const token = getBearer(req);
     if (!token) return Response.json({ error: 'missing_token' }, { status: 401 });
 
@@ -54,34 +52,25 @@ export async function POST(req) {
     try { user = await verifyIdToken(token); }
     catch { return Response.json({ error: 'invalid_token' }, { status: 401 }); }
 
-    // ---- Input ----
     const { orderId, japOrderId } = await req.json();
-
     if (!orderId && !japOrderId) {
       return Response.json({ error: 'Missing orderId or japOrderId' }, { status: 400 });
     }
 
-    // If client passed local orderId, resolve to provider id AND check ownership.
+    let localDoc = null;
     let targetJapId = japOrderId;
     if (!targetJapId && orderId) {
       const snap = await db().collection('orders').doc(String(orderId)).get();
-      if (!snap.exists) {
-        return Response.json({ error: 'order_not_found' }, { status: 404 });
-      }
+      if (!snap.exists) return Response.json({ error: 'order_not_found' }, { status: 404 });
       const doc = snap.data();
-      if (doc.uid !== user.uid) {
-        return Response.json({ error: 'forbidden' }, { status: 403 });
-      }
-      if (!doc.japOrderId) {
-        return Response.json({ error: 'order_not_placed_yet' }, { status: 409 });
-      }
+      if (doc.uid !== user.uid) return Response.json({ error: 'forbidden' }, { status: 403 });
+      if (!doc.japOrderId) return Response.json({ error: 'order_not_placed_yet' }, { status: 409 });
+      localDoc = { id: snap.id, ...doc };
       targetJapId = String(doc.japOrderId);
     }
 
-    // ---- Call provider ----
     const raw = await japStatus(targetJapId);
 
-    // Normalize some fields commonly returned by JAP
     const norm = {
       japOrderId: targetJapId,
       status: raw.status || raw.Status || 'unknown',
@@ -90,6 +79,16 @@ export async function POST(req) {
       start_count: Number(raw.start_count ?? raw['start_count'] ?? 0),
       currency: (raw.currency || raw.Currency || 'USD').toUpperCase(),
     };
+
+    // Optional: write back terminal states
+    if (localDoc && ['completed', 'partial', 'cancelled', 'canceled'].includes(String(norm.status).toLowerCase())) {
+      await db().collection('orders').doc(localDoc.id).set({
+        status: String(norm.status).toLowerCase(),
+        providerCharge: norm.charge,
+        providerRemains: norm.remains,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
 
     return Response.json({ ok: true, orderId: orderId || null, result: norm, raw });
   } catch (e) {
