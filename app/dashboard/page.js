@@ -22,11 +22,9 @@ function Toast({ text, type }) {
   if (!text) return null;
   const base = 'fixed z-30 bottom-4 left-1/2 -translate-x-1/2 rounded-lg px-4 py-2 shadow-lg';
   const tone =
-    type === 'error'
-      ? 'bg-red-600 text-white'
-      : type === 'success'
-      ? 'bg-emerald-600 text-white'
-      : 'bg-gray-900 text-white';
+    type === 'error' ? 'bg-red-600 text-white'
+    : type === 'success' ? 'bg-emerald-600 text-white'
+    : 'bg-gray-900 text-white';
   return <div className={`${base} ${tone}`}>{text}</div>;
 }
 
@@ -58,7 +56,7 @@ export default function Dashboard() {
   const listRef = useRef(null);
   const inputRef = useRef(null);
 
-  // map serviceId -> name for nicer table cells
+  // map serviceId -> name (fallback if order doesn't have serviceName)
   const serviceNameById = useMemo(() => {
     const map = new Map();
     for (const s of services || []) map.set(String(s.service), s.name);
@@ -78,7 +76,7 @@ export default function Dashboard() {
   };
   useEffect(() => setEstimate(computeEstimate(order.service, order.quantity)), [order, services]);
 
-  // --- Boot: auth + fetch initial data (no auto-intervals) ---
+  // --- Boot (manual refresh only) ---
   useEffect(() => {
     initFirebase();
     const auth = getAuth();
@@ -101,7 +99,6 @@ export default function Dashboard() {
         setLoadingBoot(false);
       }
 
-      // initial data (manual refresh afterwards)
       await Promise.all([refreshOrders(), refreshHistory()]);
     });
     return () => unsub();
@@ -138,7 +135,6 @@ export default function Dashboard() {
     }
   };
 
-  // ---- Pagination (append) ----
   const loadMoreOrders = async () => {
     if (!nextCursor) return;
     try {
@@ -169,7 +165,6 @@ export default function Dashboard() {
       const res = await fetch('/api/wallet/history', { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       setTransactions(Array.isArray(data?.items) ? data.items : []);
-      // refresh wallet balance
       const w = await fetch('/api/user/me', { headers: { Authorization: `Bearer ${token}` } }).then(r=>r.json());
       setWallet(Number(w?.balance || 0));
     } finally { setLoadingTx(false); }
@@ -215,9 +210,7 @@ export default function Dashboard() {
     const term = (search || '').toLowerCase();
     const list = services || [];
     if (!term) return list.slice(0, 20);
-    return list
-      .filter(s => (s.name + ' ' + s.category).toLowerCase().includes(term))
-      .slice(0, 30);
+    return list.filter(s => (s.name + ' ' + s.category).toLowerCase().includes(term)).slice(0, 30);
   }, [search, services]);
 
   // Close dropdown on outside click
@@ -247,14 +240,13 @@ export default function Dashboard() {
   }
 
   const by = counts.byStatus || {};
-  const serviceLabel = (sid) => serviceNameById.get(String(sid)) || sid;
+  const serviceLabel = (o) => o.serviceName || serviceNameById.get(String(o.service)) || o.service;
 
   return (
     <>
       <NavBar />
       <Toast {...toast} />
 
-      {/* subtle background glow */}
       <div className="relative">
         <div className="absolute inset-x-0 -z-10 h-40 bg-gradient-to-r from-brand/20 via-purple-300/30 to-brand/20 blur-2xl dark:from-brand/10 dark:to-brand/10" />
       </div>
@@ -441,7 +433,7 @@ export default function Dashboard() {
                   {orders.map((o) => (
                     <tr key={o.id} className="border-b border-gray-100 dark:border-gray-900">
                       <td className="py-2 pr-4">{o.id}</td>
-                      <td className="py-2 pr-4">{serviceLabel(o.service)}</td>
+                      <td className="py-2 pr-4">{serviceLabel(o)}</td>
                       <td className="py-2 pr-4">{o.quantity}</td>
                       <td className="py-2 pr-4">₦{Number(o.priceNGN || 0).toLocaleString()}</td>
                       <td className="py-2 pr-4 capitalize">{o.status}</td>
@@ -471,7 +463,7 @@ export default function Dashboard() {
                   <tr className="text-left border-b border-gray-200 dark:border-gray-800">
                     <th className="py-2 pr-4">Type</th>
                     <th className="py-2 pr-4">Title</th>
-                    <th className="py-2 pr-4">Amount</th>
+                    <th className="py-2 pr-4">Amount</                    </th>
                     <th className="py-2 pr-4">Ref/Order</th>
                     <th className="py-2 pr-4">Date</th>
                   </tr>
