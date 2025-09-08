@@ -1,4 +1,3 @@
-// app/dashboard/page.js
 'use client';
 
 import Link from 'next/link';
@@ -28,6 +27,27 @@ function Toast({ text, type }) {
       ? 'bg-emerald-600 text-white'
       : 'bg-gray-900 text-white';
   return <div className={`${base} ${tone}`}>{text}</div>;
+}
+
+// Safe date formatter for any shape
+function fmtDate(v) {
+  try {
+    if (!v) return '-';
+    if (typeof v === 'string') return v.slice(0, 19).replace('T', ' ');
+    if (v instanceof Date) return v.toISOString().slice(0, 19).replace('T', ' ');
+    if (typeof v === 'number') return new Date(v).toISOString().slice(0,19).replace('T',' ');
+    if (typeof v.seconds === 'number') {
+      const ms = v.seconds * 1000 + Math.floor((v.nanoseconds || 0) / 1e6);
+      return new Date(ms).toISOString().slice(0,19).replace('T',' ');
+    }
+    if (typeof v._seconds === 'number') {
+      const ms = v._seconds * 1000 + Math.floor((v._nanoseconds || 0) / 1e6);
+      return new Date(ms).toISOString().slice(0,19).replace('T',' ');
+    }
+    return String(v).slice(0, 19).replace('T', ' ');
+  } catch {
+    return '-';
+  }
 }
 
 export default function Dashboard() {
@@ -104,7 +124,6 @@ export default function Dashboard() {
     return () => unsub();
   }, []);
 
-  // Orders (page 1)
   const refreshOrders = async () => {
     try {
       setLoadingOrders(true);
@@ -133,7 +152,6 @@ export default function Dashboard() {
     }
   };
 
-  // Pagination (append)
   const loadMoreOrders = async () => {
     if (!nextCursor) return;
     try {
@@ -156,7 +174,6 @@ export default function Dashboard() {
     }
   };
 
-  // Tx + balance
   const refreshHistory = async () => {
     try {
       setLoadingTx(true);
@@ -177,7 +194,6 @@ export default function Dashboard() {
     } finally { setLoadingTx(false); }
   };
 
-  // Funding
   const fund = async () => {
     const amt = Number(amount);
     if (!amt || amt <= 0) {
@@ -212,7 +228,6 @@ export default function Dashboard() {
     }
   };
 
-  // Service picker filter
   const filtered = useMemo(() => {
     const term = (search || '').toLowerCase();
     const list = services || [];
@@ -222,7 +237,6 @@ export default function Dashboard() {
       .slice(0, 30);
   }, [search, services]);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const onDoc = (e) => {
       if (!listRef.current || !inputRef.current) return;
@@ -446,7 +460,7 @@ export default function Dashboard() {
                       <td className="py-2 pr-4">{o.quantity}</td>
                       <td className="py-2 pr-4">₦{Number(o.priceNGN || 0).toLocaleString()}</td>
                       <td className="py-2 pr-4 capitalize">{o.status}</td>
-                      <td className="py-2 pr-4">{(o.createdAt || '').slice(0, 19).replace('T', ' ')}</td>
+                      <td className="py-2 pr-4">{fmtDate(o.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -456,8 +470,8 @@ export default function Dashboard() {
         </section>
 
         {/* Transactions */}
-        <section className="card p-5 md:p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
+        <section className="card p-5 md:p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow_sm">
+          <div className="flex items-center justify_between gap-3 flex-wrap">
             <h5 className="font-semibold text-lg">Transactions</h5>
             <button className="btn-outline" onClick={refreshHistory} disabled={loadingTx}>Refresh</button>
           </div>
@@ -486,7 +500,7 @@ export default function Dashboard() {
                         {t.type === 'credit' ? '+' : '-'} ₦{Number(t.amountNGN || 0).toLocaleString()}
                       </td>
                       <td className="py-2 pr-4">{t.reference || t.orderId || '-'}</td>
-                      <td className="py-2 pr-4">{(t.createdAt || '').slice(0,19).replace('T',' ')}</td>
+                      <td className="py-2 pr-4">{fmtDate(t.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>
