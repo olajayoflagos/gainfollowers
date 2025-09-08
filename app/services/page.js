@@ -1,6 +1,7 @@
+// app/services/page.js
 'use client';
 
-import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import NavBar from '../components/NavBar';
 
 // NGN formatter
@@ -11,8 +12,8 @@ const fmt = (n) =>
     maximumFractionDigits: 0,
   }).format(Math.max(0, Math.round(Number(n || 0))));
 
-// small debounce hook
-function useDebounced<T>(value: T, delay = 250) {
+// JS-only debounce hook
+function useDebounced(value, delay = 250) {
   const [v, setV] = useState(value);
   useEffect(() => {
     const t = setTimeout(() => setV(value), delay);
@@ -25,40 +26,35 @@ export default function ServicesPage() {
   const [raw, setRaw] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // filters
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounced(search, 250);
 
-  const [sortBy, setSortBy] = useState<'name_asc'|'p1k_asc'|'p10_asc'|'p1_asc'>('name_asc');
+  // sorting: name_asc | p1k_asc | p10_asc | p1_asc
+  const [sortBy, setSortBy] = useState('name_asc');
 
-  // Category dropdown state
+  // Category multi-select dropdown state
   const [catOpen, setCatOpen] = useState(false);
   const [catQuery, setCatQuery] = useState('');
-  const [selectedCats, setSelectedCats] = useState<string[]>([]);
-  const debouncedCats = useDebounced(selectedCats, 150);
-  const catRef = useRef<HTMLDivElement|null>(null);
+  const [selectedCats, setSelectedCats] = useState([]);
+  const catRef = useRef(null);
 
-  // “virtualization”: render in chunks to avoid long paints on mobile
-  const PAGE = 200;         // rows per “page”
-  const [limit, setLimit] = useState(PAGE);
-  const [isPending, startTransition] = useTransition();
-
-  // Close dropdown on outside click
+  // Close category dropdown on outside click
   useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
+    const onDoc = (e) => {
       if (!catRef.current) return;
-      if (!catRef.current.contains(e.target as Node)) setCatOpen(false);
+      if (!catRef.current.contains(e.target)) setCatOpen(false);
     };
     document.addEventListener('click', onDoc);
     return () => document.removeEventListener('click', onDoc);
   }, []);
 
-  // Fetch + compute NGN pricing on client
+  // Fetch services and compute NGN pricing on client
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch('/api/jap/services', { cache: 'no-store' });
         const data = await res.json();
+
         const usdNgn = Number(process.env.NEXT_PUBLIC_USD_NGN_RATE || 1700);
         const margin = Number(process.env.NEXT_PUBLIC_MARGIN_PERCENT || 20);
         const mul = usdNgn * (1 + margin / 100);
@@ -66,7 +62,7 @@ export default function ServicesPage() {
         const enriched = (Array.isArray(data) ? data : []).map((s) => {
           const rateUSD1k = Number(s.rate || 0);
           const per1k = rateUSD1k * mul;
-          const per10 = per1k * 0.01;         // 10 / 1000
+          const per10 = per1k * (10 / 1000);
           const per1 = per1k / 1000;
           return {
             ...s,
@@ -85,7 +81,7 @@ export default function ServicesPage() {
     })();
   }, []);
 
-  // All categories & filtered list for dropdown
+  // All categories & filtered options
   const allCategories = useMemo(() => {
     return Array.from(new Set(raw.map((s) => s.category))).sort((a, b) =>
       String(a).localeCompare(String(b))
@@ -98,52 +94,47 @@ export default function ServicesPage() {
     return allCategories.filter((c) => String(c).toLowerCase().includes(q));
   }, [allCategories, catQuery]);
 
-  // Apply search + category filter + sort (deferred by debounce & transition)
-  const rowsAll = useMemo(() => {
+  // Apply search + category filter + sort
+  const rows = useMemo(() => {
     const term = (debouncedSearch || '').toLowerCase();
-    const catSet = new Set(debouncedCats.map((x) => String(x).toLowerCase()));
+    const catSet = new Set((selectedCats || []).map((x) => String(x).toLowerCase()));
 
-    let items = raw.filter((s) => {
+    let items = (raw || []).filter((s) => {
       const nameCat = `${s.name} ${s.category}`.toLowerCase();
       const textOk = !term || nameCat.includes(term);
       const catOk = catSet.size === 0 || catSet.has(String(s.category).toLowerCase());
       return textOk && catOk;
     });
 
-    // stable-ish sort
-    if (sortBy === 'p1k_asc') items.sort((a, b) => a.priceNGN_1k - b.priceNGN_1k || String(a.name).localeCompare(b.name));
-    else if (sortBy === 'p10_asc') items.sort((a, b) => a.priceNGN_10 - b.priceNGN_10 || String(a.name).localeCompare(b.name));
-    else if (sortBy === 'p1_asc') items.sort((a, b) => a.priceNGN_1 - b.priceNGN_1 || String(a.name).localeCompare(b.name));
-    else items.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    switch (sortBy) {
+      case 'p1k_asc':
+        items.sort((a, b) => a.priceNGN_1k - b.priceNGN_1k);
+        break;
+      case 'p10_asc':
+        items.sort((a, b) => a.priceNGN_10 - b.priceNGN_10);
+        break;
+      case 'p1_asc':
+        items.sort((a, b) => a.priceNGN_1 - b.priceNGN_1);
+        break;
+      case 'name_asc':
+      default:
+        items.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        break;
+    }
 
     return items;
-  }, [raw, debouncedSearch, debouncedCats, sortBy]);
+  }, [raw, debouncedSearch, selectedCats, sortBy]);
 
-  // when filters change, reset the virtualized limit smoothly
-  useEffect(() => {
-    startTransition(() => setLimit(PAGE));
-  }, [debouncedSearch, debouncedCats, sortBy]);
-
-  const rows = rowsAll.slice(0, limit);
-  const remaining = Math.max(0, rowsAll.length - rows.length);
-
-  // Toggle category selection
-  const toggleCat = (c: string) => {
+  const toggleCat = (c) => {
     setSelectedCats((prev) =>
       prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
     );
   };
 
-  const selectAllVisibleCats = () => {
-    setSelectedCats(filteredCatOptions);
-  };
-  const clearCats = () => setSelectedCats([]);
-
   return (
     <>
       <NavBar />
       <div className="container py-8 space-y-4">
-
         {/* Filters */}
         <div className="card p-4 md:p-5">
           <div className="grid gap-3 md:grid-cols-3">
@@ -156,9 +147,6 @@ export default function ServicesPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
-              <p className="mt-1 text-[11px] text-gray-500">
-                {isPending ? 'Updating…' : `Showing ${rows.length} of ${rowsAll.length} results`}
-              </p>
             </div>
 
             {/* Category multi-select dropdown (searchable) */}
@@ -176,16 +164,13 @@ export default function ServicesPage() {
 
               {catOpen && (
                 <div className="absolute left-0 right-0 z-20 mt-2 rounded-xl border border-gray-200 bg-white shadow-lg dark:border-gray-800 dark:bg-gray-900 max-h-80 overflow-auto">
-                  <div className="p-2 border-b border-gray-100 dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900 flex gap-2">
+                  <div className="p-2 border-b border-gray-100 dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900">
                     <input
-                      className="input flex-1"
+                      className="input"
                       placeholder="Type to filter categories…"
                       value={catQuery}
                       onChange={(e) => setCatQuery(e.target.value)}
                     />
-                    <button className="btn-outline text-xs" onClick={selectAllVisibleCats}>
-                      Select all
-                    </button>
                   </div>
                   <div className="p-2 space-y-1">
                     {filteredCatOptions.length === 0 && (
@@ -210,7 +195,10 @@ export default function ServicesPage() {
                     })}
                   </div>
                   <div className="p-2 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between">
-                    <button className="btn-ghost text-sm" onClick={clearCats}>
+                    <button
+                      className="btn-ghost text-sm"
+                      onClick={() => setSelectedCats([])}
+                    >
                       Clear
                     </button>
                     <button className="btn-primary text-sm" onClick={() => setCatOpen(false)}>
@@ -288,19 +276,9 @@ export default function ServicesPage() {
             </table>
           </div>
 
-          {/* footer / legend + load more */}
-          <div className="px-4 py-3 text-xs flex flex-wrap items-center gap-3 justify-between text-gray-500 dark:text-gray-400">
-            <span>
-              Rate basis from provider is per 1000 units. Estimates include your NGN/USD rate and margin.
-            </span>
-            {remaining > 0 && (
-              <button
-                className="btn-outline text-xs"
-                onClick={() => startTransition(() => setLimit((n) => n + PAGE))}
-              >
-                Load more ({remaining.toLocaleString()} more)
-              </button>
-            )}
+          <div className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
+            Rate basis from provider is per 1000 units. Estimates shown include your configured
+            NGN/USD and margin.
           </div>
         </div>
       </div>
