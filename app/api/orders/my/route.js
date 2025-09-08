@@ -34,7 +34,7 @@ export async function GET(req) {
 
     if (after) {
       const afterSnap = await col.doc(after).get();
-      if (afterSnap.exists) q = q.startAfter(afterSnap); // snapshot cursor
+      if (afterSnap.exists) q = q.startAfter(afterSnap);
     }
 
     const snap = await q.get();
@@ -42,15 +42,10 @@ export async function GET(req) {
       const x = d.data();
       const ca = x.createdAt?.toDate ? x.createdAt.toDate().toISOString() : String(x.createdAt || '');
       const ua = x.updatedAt?.toDate ? x.updatedAt.toDate().toISOString() : String(x.updatedAt || '');
-      return {
-        id: d.id,
-        ...x,
-        createdAt: ca,
-        updatedAt: ua,
-      };
+      return { id: d.id, ...x, createdAt: ca, updatedAt: ua };
     });
 
-    // Counts
+    // Counts (best-effort)
     let totalCount = items.length;
     const byStatus = items.reduce((m, x) => {
       const s = String(x.status || 'unknown').toLowerCase();
@@ -94,7 +89,7 @@ export async function GET(req) {
         page: { limit, nextCursor: items.length ? items[items.length - 1].id : null },
         counts: { total: items.length, byStatus },
         index_required: true,
-        hint: 'Create composite index (uid ASC, createdAt DESC) on collection "orders".',
+        hint: 'Create composite index: Collection "orders", Fields (uid ASC, createdAt DESC), Query scope: Collection.',
       });
     }
 
