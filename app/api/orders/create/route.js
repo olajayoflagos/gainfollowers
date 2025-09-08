@@ -25,7 +25,6 @@ async function placeJapOrder({ service, link, quantity }) {
   form.set('link', String(link));
   form.set('quantity', String(quantity));
 
-  // 10s timeout so we don’t hang the route
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), 10_000);
 
@@ -39,9 +38,7 @@ async function placeJapOrder({ service, link, quantity }) {
     });
     text = await res.text();
     try { data = JSON.parse(text); } catch { data = null; }
-  } finally {
-    clearTimeout(t);
-  }
+  } finally { clearTimeout(t); }
 
   if (!res.ok || !data?.order) {
     const msg = (data && (data.error || data.message)) || text || `JAP order failed (${res.status})`;
@@ -69,7 +66,7 @@ export async function POST(req) {
       return Response.json({ error: 'missing_fields' }, { status: 400 });
     }
 
-    // ---- Service & pricing ----
+    // ---- Service & pricing (snapshot) ----
     const origin = new URL(req.url).origin;
     let svcList = [];
     try {
@@ -113,11 +110,14 @@ export async function POST(req) {
       tx.set(orderRef, {
         uid: user.uid,
         service: String(service),
+        serviceName: String(svc.name || ''),     // snapshot
+        category: String(svc.category || ''),    // snapshot
+        rateUsdPer1k,                            // snapshot
         link: String(link),
         quantity: qty,
         priceNGN,
         status: 'creating',
-        createdAt: admin.firestore.FieldValue.serverTimestamp(), // ✅ Timestamp
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
       tx.set(db().collection('wallet_debits').doc(orderRef.id), {
@@ -126,7 +126,7 @@ export async function POST(req) {
         amountNGN: priceNGN,
         title: `Order ${orderRef.id}`,
         type: 'debit',
-        createdAt: admin.firestore.FieldValue.serverTimestamp(), // ✅ Timestamp
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
       return { orderId: orderRef.id, balanceAfter: newBal };
@@ -151,13 +151,13 @@ export async function POST(req) {
 
         tx.set(db().collection('wallet_debits').doc(orderId), {
           refunded: true,
-          refundedAt: admin.firestore.FieldValue.serverTimestamp(), // ✅ Timestamp
+          refundedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
 
         tx.set(db().collection('orders').doc(orderId), {
           status: 'failed',
           error: String(e?.message || e),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(), // ✅ Timestamp
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
       });
 
@@ -168,7 +168,7 @@ export async function POST(req) {
     await db().collection('orders').doc(orderId).set({
       status: 'pending',
       japOrderId: String(japOrderId),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(), // ✅ Timestamp
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
     return Response.json({ ok: true, orderId, japOrderId, priceNGN, balanceAfter });
