@@ -3,7 +3,6 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-import admin from 'firebase-admin';
 import { verifyIdToken, db } from '../../../../lib/firebaseAdmin';
 
 function getBearer(req) {
@@ -19,8 +18,9 @@ async function japStatus(japOrderId) {
   form.set('action', 'status');
   form.set('order', String(japOrderId));
 
+  // 20s timeout
   const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), 10_000);
+  const t = setTimeout(() => ac.abort(), 20_000);
 
   let res, text, data;
   try {
@@ -32,7 +32,9 @@ async function japStatus(japOrderId) {
     });
     text = await res.text();
     try { data = JSON.parse(text); } catch { data = null; }
-  } finally { clearTimeout(t); }
+  } finally {
+    clearTimeout(t);
+  }
 
   if (!res.ok || !data) {
     const msg = (data && (data.error || data.message)) || text || `JAP status failed (${res.status})`;
@@ -57,7 +59,7 @@ export async function POST(req) {
       return Response.json({ error: 'Missing orderId or japOrderId' }, { status: 400 });
     }
 
-    let localDoc = null;
+    // Resolve by local order id (and check ownership)
     let targetJapId = japOrderId;
     if (!targetJapId && orderId) {
       const snap = await db().collection('orders').doc(String(orderId)).get();
@@ -65,7 +67,6 @@ export async function POST(req) {
       const doc = snap.data();
       if (doc.uid !== user.uid) return Response.json({ error: 'forbidden' }, { status: 403 });
       if (!doc.japOrderId) return Response.json({ error: 'order_not_placed_yet' }, { status: 409 });
-      localDoc = { id: snap.id, ...doc };
       targetJapId = String(doc.japOrderId);
     }
 
@@ -79,16 +80,6 @@ export async function POST(req) {
       start_count: Number(raw.start_count ?? raw['start_count'] ?? 0),
       currency: (raw.currency || raw.Currency || 'USD').toUpperCase(),
     };
-
-    // Optional: write back terminal states
-    if (localDoc && ['completed', 'partial', 'cancelled', 'canceled'].includes(String(norm.status).toLowerCase())) {
-      await db().collection('orders').doc(localDoc.id).set({
-        status: String(norm.status).toLowerCase(),
-        providerCharge: norm.charge,
-        providerRemains: norm.remains,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-    }
 
     return Response.json({ ok: true, orderId: orderId || null, result: norm, raw });
   } catch (e) {
