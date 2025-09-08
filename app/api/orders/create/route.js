@@ -12,6 +12,10 @@ function getBearer(req) {
 }
 
 async function placeJapOrder({ service, link, quantity }) {
+  // quick sanity
+  if (!process.env.JAP_API_KEY) throw Object.assign(new Error('JAP_API_KEY missing'), { status: 500 });
+  const url = process.env.JAP_API_URL || 'https://justanotherpanel.com/api/v2';
+
   const form = new URLSearchParams();
   form.set('key', process.env.JAP_API_KEY);
   form.set('action', 'add');
@@ -19,118 +23,122 @@ async function placeJapOrder({ service, link, quantity }) {
   form.set('link', String(link));
   form.set('quantity', String(quantity));
 
-  const res = await fetch(process.env.JAP_API_URL || 'https://justanotherpanel.com/api/v2', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: form.toString(),
-    // cache: 'no-store' // optional
-  });
+  // 10s timeout so the route doesn’t hang
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), 10_000);
 
-  const data = await res.json().catch(() => ({}));
+  let res, text, data;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form.toString(),
+      signal: ac.signal,
+      // cache: 'no-store'
+    });
+    text = await res.text();
+    try { data = JSON.parse(text); } catch { data = null; }
+  } finally {
+    clearTimeout(t);
+  }
+
   if (!res.ok || !data?.order) {
-    const msg = data?.error || `JAP order failed (${res.status})`;
-    throw new Error(msg);
+    const msg = (data && (data.error || data.message)) || text || `JAP order failed (${res.status})`;
+    const err = new Error(msg);
+    err.status = 502;
+    throw err;
   }
   return data.order; // JAP order id
 }
 
 export async function POST(req) {
   try {
+    // ---- Auth ----
     const idToken = getBearer(req);
     if (!idToken) return Response.json({ error: 'missing_token' }, { status: 401 });
 
     let user;
-    try {
-      user = await verifyIdToken(idToken);
-    } catch {
-      return Response.json({ error: 'invalid_token' }, { status: 401 });
-    }
+    try { user = await verifyIdToken(idToken); }
+    catch { return Response.json({ error: 'invalid_token' }, { status: 401 }); }
 
+    // ---- Input ----
     const { service, link, quantity } = await req.json();
     const qty = Number(quantity || 0);
     if (!service || !link || !qty) {
       return Response.json({ error: 'missing_fields' }, { status: 400 });
     }
 
-    // ---- Load service rate to price in NGN ----
-    const origin = new URL(req.url).origin; // robust in dev/prod
+    // ---- Service & pricing ----
+    const origin = new URL(req.url).origin;
     let svcList = [];
     try {
       const svcRes = await fetch(`${origin}/api/jap/services`, { cache: 'no-store' });
-      svcList = await svcRes.json();
-    } catch (e) {
-      // fall through with empty list; will error below
-    }
+      if (svcRes.ok) svcList = await svcRes.json();
+    } catch { /* ignore */ }
 
     const svc = Array.isArray(svcList)
-      ? svcList.find((s) => String(s.service) === String(service))
+      ? svcList.find(s => String(s.service) === String(service))
       : null;
 
-    if (!svc) {
-      return Response.json({ error: 'unknown_service' }, { status: 400 });
-    }
+    if (!svc) return Response.json({ error: 'unknown_service' }, { status: 400 });
 
-    // optional: enforce min/max server-side
     const min = Number(svc.min || 0);
     const max = Number(svc.max || 0);
     if ((min && qty < min) || (max && qty > max)) {
-      return Response.json(
-        { error: 'invalid_quantity', min, max },
-        { status: 400 }
-      );
+      return Response.json({ error: 'invalid_quantity', min, max }, { status: 400 });
     }
 
     const rateUsdPer1k = Number(svc.rate || 0);
+    if (!rateUsdPer1k) {
+      return Response.json({ error: 'bad_service_rate' }, { status: 400 });
+    }
+
     const usdNgn = Number(process.env.USD_NGN_RATE || process.env.NEXT_PUBLIC_USD_NGN_RATE || 1700);
     const margin = Number(process.env.MARGIN_PERCENT || process.env.NEXT_PUBLIC_MARGIN_PERCENT || 20);
     const priceNGN = Math.ceil((rateUsdPer1k * (qty / 1000)) * usdNgn * (1 + margin / 100));
 
-    // ---- Atomically reserve funds & create order shell ----
-    const { orderId, balanceAfter } = await db()
-      .runTransaction(async (tx) => {
-        const walletRef = db().collection('wallets').doc(user.uid);
-        const wSnap = await tx.get(walletRef);
-        const balance = wSnap.exists ? Number(wSnap.data().balance || 0) : 0;
+    // ---- Reserve funds & create order ----
+    const { orderId, balanceAfter } = await db().runTransaction(async (tx) => {
+      const walletRef = db().collection('wallets').doc(user.uid);
+      const wSnap = await tx.get(walletRef);
+      const balance = wSnap.exists ? Number(wSnap.data().balance || 0) : 0;
 
-        if (balance < priceNGN) {
-          throw Object.assign(new Error('insufficient_funds'), { code: 'insufficient_funds' });
-        }
+      if (balance < priceNGN) {
+        throw Object.assign(new Error('insufficient_funds'), { code: 'insufficient_funds' });
+      }
 
-        const newBal = balance - priceNGN;
-        tx.set(walletRef, { balance: newBal }, { merge: true });
+      const newBal = balance - priceNGN;
+      tx.set(walletRef, { balance: newBal }, { merge: true });
 
-        const orderRef = db().collection('orders').doc();
-        tx.set(orderRef, {
-          uid: user.uid,
-          service: String(service),
-          link: String(link),
-          quantity: qty,
-          priceNGN,
-          status: 'creating',
-          createdAt: new Date().toISOString(),
-        });
-
-        // record debit
-        tx.set(db().collection('wallet_debits').doc(orderRef.id), {
-          uid: user.uid,
-          orderId: orderRef.id,
-          amountNGN: priceNGN,
-          title: `Order ${orderRef.id}`,
-          type: 'debit',
-          createdAt: new Date().toISOString(),
-        });
-
-        // ✅ return names that match what we’ll destructure later
-        return { orderId: orderRef.id, balanceAfter: newBal };
-      })
-      .catch((e) => {
-        if (e?.code === 'insufficient_funds' || e?.message === 'insufficient_funds') {
-          throw Object.assign(new Error('insufficient_funds'), { status: 400 });
-        }
-        throw e;
+      const orderRef = db().collection('orders').doc();
+      tx.set(orderRef, {
+        uid: user.uid,
+        service: String(service),
+        link: String(link),
+        quantity: qty,
+        priceNGN,
+        status: 'creating',
+        createdAt: new Date().toISOString(),
       });
 
-    // ---- Place the JAP order (outside txn) ----
+      tx.set(db().collection('wallet_debits').doc(orderRef.id), {
+        uid: user.uid,
+        orderId: orderRef.id,
+        amountNGN: priceNGN,
+        title: `Order ${orderRef.id}`,
+        type: 'debit',
+        createdAt: new Date().toISOString(),
+      });
+
+      return { orderId: orderRef.id, balanceAfter: newBal };
+    }).catch((e) => {
+      if (e?.code === 'insufficient_funds' || e?.message === 'insufficient_funds') {
+        throw Object.assign(new Error('insufficient_funds'), { status: 400 });
+      }
+      throw e;
+    });
+
+    // ---- Call provider ----
     let japOrderId;
     try {
       japOrderId = await placeJapOrder({ service, link, quantity: qty });
@@ -154,35 +162,20 @@ export async function POST(req) {
         }, { merge: true });
       });
 
-      return Response.json(
-        { error: 'jap_failed', detail: String(e?.message || e) },
-        { status: 502 }
-      );
+      return Response.json({ error: 'jap_failed', detail: String(e?.message || e) }, { status: e.status || 502 });
     }
 
-    // ---- Mark order as placed ----
-    await db().collection('orders').doc(orderId).set(
-      {
-        status: 'pending',
-        japOrderId: String(japOrderId),
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
+    // ---- Mark success ----
+    await db().collection('orders').doc(orderId).set({
+      status: 'pending',
+      japOrderId: String(japOrderId),
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
 
-    return Response.json({
-      ok: true,
-      orderId,
-      japOrderId,
-      priceNGN,
-      balanceAfter,
-    });
+    return Response.json({ ok: true, orderId, japOrderId, priceNGN, balanceAfter });
   } catch (e) {
     console.error('orders/create error:', e);
     const status = e?.status || 500;
-    return Response.json(
-      { error: 'server_error', detail: String(e?.message || e) },
-      { status }
-    );
+    return Response.json({ error: 'server_error', detail: String(e?.message || e) }, { status });
   }
 }
