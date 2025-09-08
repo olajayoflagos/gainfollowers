@@ -17,6 +17,7 @@ function Spinner({ label = 'Loading…' }) {
     </div>
   );
 }
+
 function Toast({ text, type }) {
   if (!text) return null;
   const base = 'fixed z-30 bottom-4 left-1/2 -translate-x-1/2 rounded-lg px-4 py-2 shadow-lg';
@@ -28,6 +29,23 @@ function Toast({ text, type }) {
       : 'bg-gray-900 text-white';
   return <div className={`${base} ${tone}`}>{text}</div>;
 }
+
+// format Firestore Timestamp or string/Date-ish safely
+const fmtDateTime = (v) => {
+  try {
+    if (!v) return '-';
+    if (v?.seconds) return new Date(v.seconds * 1000).toLocaleString();
+    if (typeof v === 'string') {
+      const s = v.includes('T') ? v.slice(0, 19).replace('T', ' ') : v;
+      const d = new Date(v);
+      return Number.isNaN(+d) ? s : d.toLocaleString();
+    }
+    const d = new Date(v);
+    return Number.isNaN(+d) ? '-' : d.toLocaleString();
+  } catch {
+    return '-';
+  }
+};
 
 export default function Dashboard() {
   const [user, setUser] = useState(null);
@@ -57,7 +75,7 @@ export default function Dashboard() {
   const listRef = useRef(null);
   const inputRef = useRef(null);
 
-  // map serviceId -> name for nicer table cells
+  // map serviceId -> name
   const serviceNameById = useMemo(() => {
     const map = new Map();
     for (const s of services || []) map.set(String(s.service), s.name);
@@ -77,7 +95,7 @@ export default function Dashboard() {
   };
   useEffect(() => setEstimate(computeEstimate(order.service, order.quantity)), [order, services]);
 
-  // --- Boot: auth + fetch initial data ---
+  // --- Boot: auth + initial fetches (NO auto-refresh timers) ---
   useEffect(() => {
     initFirebase();
     const auth = getAuth();
@@ -100,11 +118,9 @@ export default function Dashboard() {
         setLoadingBoot(false);
       }
 
-      refreshOrders();  // initial orders load
-      refreshHistory(); // tx + balance
-      const id1 = setInterval(refreshOrders, 20000);
-      const id2 = setInterval(refreshHistory, 25000);
-      return () => { clearInterval(id1); clearInterval(id2); };
+      // initial loads only
+      refreshOrders();
+      refreshHistory();
     });
     return () => unsub();
   }, []);
@@ -155,7 +171,6 @@ export default function Dashboard() {
       if (res.ok && Array.isArray(data?.items)) {
         setOrders((prev) => [...prev, ...data.items]);
         setNextCursor(data?.page?.nextCursor || null);
-        // counts should already represent total; no need to recompute here
       }
     } finally {
       setLoadingMore(false);
@@ -213,7 +228,7 @@ export default function Dashboard() {
     }
   };
 
-  // Search filtering for the service picker
+  // Service picker filtering
   const filtered = useMemo(() => {
     const term = (search || '').toLowerCase();
     const list = services || [];
@@ -418,9 +433,7 @@ export default function Dashboard() {
                       <td className="py-2 pr-4">{o.quantity}</td>
                       <td className="py-2 pr-4">₦{Number(o.priceNGN || 0).toLocaleString()}</td>
                       <td className="py-2 pr-4 capitalize">{o.status}</td>
-                      <td className="py-2 pr-4">
-                        {(o.createdAt || '').slice(0, 19).replace('T', ' ')}
-                      </td>
+                      <td className="py-2 pr-4">{fmtDateTime(o.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -460,7 +473,7 @@ export default function Dashboard() {
                         {t.type === 'credit' ? '+' : '-'} ₦{Number(t.amountNGN || 0).toLocaleString()}
                       </td>
                       <td className="py-2 pr-4">{t.reference || t.orderId || '-'}</td>
-                      <td className="py-2 pr-4">{(t.createdAt || '').slice(0,19).replace('T',' ')}</td>
+                      <td className="py-2 pr-4">{fmtDateTime(t.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>
