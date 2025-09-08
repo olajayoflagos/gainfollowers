@@ -11,16 +11,16 @@ function getBearer(req) {
   return m ? m[1] : '';
 }
 
-// Helper to parse query params
 function qp(req) {
   const u = new URL(req.url);
-  return {
-    limit: Math.min(Math.max(Number(u.searchParams.get('limit') || 50), 1), 200),
-    after: u.searchParams.get('after') || '', // cursor (doc id)
-  };
+  // slightly smaller default page for snappier load
+  const limit = Math.min(Math.max(Number(u.searchParams.get('limit') || 30), 1), 200);
+  const after = u.searchParams.get('after') || ''; // cursor = doc id
+  return { limit, after };
 }
 
 export async function GET(req) {
+  // ---- Auth ----
   const idToken = getBearer(req);
   if (!idToken) return Response.json({ error: 'missing_token' }, { status: 401 });
 
@@ -35,20 +35,29 @@ export async function GET(req) {
   const col = db().collection('orders');
 
   try {
-    // Try the ideal query (filter + orderBy)
+    // Ideal query: filter by uid + order by createdAt desc
     let q = col.where('uid', '==', user.uid).orderBy('createdAt', 'desc').limit(limit);
 
-    // cursor support (by doc id)
+    // Cursor: look up the "after" doc and continue after its createdAt
     if (after) {
-      // Find the doc to start after
       const afterDoc = await col.doc(after).get();
-      if (afterDoc.exists) q = q.startAfter(afterDoc.get('createdAt') || '');
+      if (afterDoc.exists) {
+        const afterCreated = afterDoc.get('createdAt') || '';
+        q = q.startAfter(afterCreated);
+      }
     }
 
     const snap = await q.get();
-    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const items = snap.docs.map((d) => {
+      const data = d.data() || {};
+      // normalize createdAt to string to avoid UI hiccups
+      const createdAt = typeof data.createdAt === 'string'
+        ? data.createdAt
+        : (data.createdAt?.toISOString?.() || '');
+      return { id: d.id, ...data, createdAt };
+    });
 
-    // --- counts (best-effort)
+    // ---- Counts (best-effort) ----
     let totalCount = items.length;
     const byStatus = items.reduce((m, x) => {
       const s = (x.status || 'unknown').toLowerCase();
@@ -56,11 +65,13 @@ export async function GET(req) {
       return m;
     }, {});
 
-    // Firestore aggregation count (if available in your SDK)
+    // If your Firestore SDK supports aggregate count:
     try {
       const agg = await col.where('uid', '==', user.uid).count().get();
-      totalCount = agg.data().count ?? totalCount;
-    } catch { /* old SDK or rules; ignore */ }
+      if (typeof agg.data?.().count === 'number') totalCount = agg.data().count;
+    } catch {
+      /* ignore if not supported */
+    }
 
     return Response.json({
       items,
@@ -68,18 +79,21 @@ export async function GET(req) {
       counts: { total: totalCount, byStatus },
     });
   } catch (e) {
-    // If the error is “index required”, surface it and still return a fallback
     const msg = String(e?.message || '');
     const needsIndex =
-      e?.code === 9 || // Firestore failed-precondition
-      /needs a composite index/i.test(msg) ||
-      /FAILED_PRECONDITION/i.test(msg);
+      e?.code === 9 || /needs a composite index/i.test(msg) || /FAILED_PRECONDITION/i.test(msg);
 
     if (needsIndex) {
-      // Fallback: query without orderBy (then sort in-memory)
+      // Fallback without orderBy (then sort in-memory)
       const snap = await col.where('uid', '==', user.uid).limit(limit).get();
       const items = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
+        .map((d) => {
+          const data = d.data() || {};
+          const createdAt = typeof data.createdAt === 'string'
+            ? data.createdAt
+            : (data.createdAt?.toISOString?.() || '');
+          return { id: d.id, ...data, createdAt };
+        })
         .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
 
       const byStatus = items.reduce((m, x) => {
@@ -94,13 +108,10 @@ export async function GET(req) {
         counts: { total: items.length, byStatus },
         index_required: true,
         hint:
-          'Create a Firestore composite index for: where(uid ==) + orderBy(createdAt desc). In the Firebase console, add a composite index on (uid ASC, createdAt DESC).',
+          'Create a Firestore composite index on (uid ASC, createdAt DESC) for collection "orders".',
       });
     }
 
-    return Response.json(
-      { error: 'server_error', detail: msg },
-      { status: 500 }
-    );
+    return Response.json({ error: 'server_error', detail: msg }, { status: 500 });
   }
 }
