@@ -22,9 +22,11 @@ function Toast({ text, type }) {
   if (!text) return null;
   const base = 'fixed z-30 bottom-4 left-1/2 -translate-x-1/2 rounded-lg px-4 py-2 shadow-lg';
   const tone =
-    type === 'error' ? 'bg-red-600 text-white'
-    : type === 'success' ? 'bg-emerald-600 text-white'
-    : 'bg-gray-900 text-white';
+    type === 'error'
+      ? 'bg-red-600 text-white'
+      : type === 'success'
+      ? 'bg-emerald-600 text-white'
+      : 'bg-gray-900 text-white';
   return <div className={`${base} ${tone}`}>{text}</div>;
 }
 
@@ -56,14 +58,12 @@ export default function Dashboard() {
   const listRef = useRef(null);
   const inputRef = useRef(null);
 
-  // map serviceId -> name (fallback if order doesn't have serviceName)
   const serviceNameById = useMemo(() => {
     const map = new Map();
     for (const s of services || []) map.set(String(s.service), s.name);
     return map;
   }, [services]);
 
-  // --- Estimate in NGN ---
   const computeEstimate = (svcId, qty) => {
     if (!svcId || !qty) return 0;
     const svc = (services || []).find((s) => String(s.service) === String(svcId));
@@ -76,7 +76,7 @@ export default function Dashboard() {
   };
   useEffect(() => setEstimate(computeEstimate(order.service, order.quantity)), [order, services]);
 
-  // --- Boot (manual refresh only) ---
+  // Boot (no auto-intervals)
   useEffect(() => {
     initFirebase();
     const auth = getAuth();
@@ -93,8 +93,8 @@ export default function Dashboard() {
         setWallet(Number(w?.balance || 0));
         setServices(Array.isArray(s) ? s : []);
         if (!s || !s.length) setToast({ text: 'Could not load services. Check JAP_API_KEY.', type: 'error' });
-      } catch {
-        setToast({ text: 'Failed to load data.', type: 'error' });
+      } catch (e) {
+        setToast({ text: `Boot failed: ${e?.message || e}`, type: 'error' });
       } finally {
         setLoadingBoot(false);
       }
@@ -104,7 +104,7 @@ export default function Dashboard() {
     return () => unsub();
   }, []);
 
-  // ---- Orders fetch (page 1) ----
+  // Orders (page 1)
   const refreshOrders = async () => {
     try {
       setLoadingOrders(true);
@@ -112,15 +112,13 @@ export default function Dashboard() {
       if (!cu) return;
       const token = await cu.getIdToken(true);
       const res = await fetch('/api/orders/my?limit=50', { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
+      const data = await res.json().catch(()=> ({}));
 
       if (!res.ok) {
         setOrders([]);
         setCounts({ total: 0, byStatus: {} });
         setNextCursor(null);
-        if (data?.index_required) {
-          setToast({ text: 'Firestore index needed for orders. Open Admin to create it.', type: 'error' });
-        }
+        setToast({ text: data?.error ? `orders/my: ${data.error} ${data.detail || ''}` : `orders/my failed (${res.status})`, type: 'error' });
         return;
       }
 
@@ -135,6 +133,7 @@ export default function Dashboard() {
     }
   };
 
+  // Pagination (append)
   const loadMoreOrders = async () => {
     if (!nextCursor) return;
     try {
@@ -145,32 +144,40 @@ export default function Dashboard() {
       const res = await fetch(`/api/orders/my?limit=50&after=${encodeURIComponent(nextCursor)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json();
+      const data = await res.json().catch(()=> ({}));
       if (res.ok && Array.isArray(data?.items)) {
         setOrders((prev) => [...prev, ...data.items]);
         setNextCursor(data?.page?.nextCursor || null);
+      } else if (!res.ok) {
+        setToast({ text: data?.error ? `orders/my: ${data.error}` : `orders/my failed (${res.status})`, type: 'error' });
       }
     } finally {
       setLoadingMore(false);
     }
   };
 
-  // ---- Tx + balance ----
+  // Tx + balance
   const refreshHistory = async () => {
     try {
       setLoadingTx(true);
       const cu = getAuth().currentUser;
       if (!cu) return;
       const token = await cu.getIdToken(true);
+
       const res = await fetch('/api/wallet/history', { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
-      setTransactions(Array.isArray(data?.items) ? data.items : []);
-      const w = await fetch('/api/user/me', { headers: { Authorization: `Bearer ${token}` } }).then(r=>r.json());
-      setWallet(Number(w?.balance || 0));
+      const data = await res.json().catch(()=> ({}));
+      if (res.ok) {
+        setTransactions(Array.isArray(data?.items) ? data.items : []);
+      } else {
+        setToast({ text: data?.error ? `wallet/history: ${data.error}` : `wallet/history failed (${res.status})`, type: 'error' });
+      }
+
+      const w = await fetch('/api/user/me', { headers: { Authorization: `Bearer ${token}` } }).then(r=>r.json()).catch(()=> ({}));
+      if (w && typeof w.balance !== 'undefined') setWallet(Number(w.balance || 0));
     } finally { setLoadingTx(false); }
   };
 
-  // --- Funding ---
+  // Funding
   const fund = async () => {
     const amt = Number(amount);
     if (!amt || amt <= 0) {
@@ -190,27 +197,29 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ amount: amt, callbackUrl }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(()=> ({}));
 
-      if (data?.authorization_url) {
+      if (res.ok && data?.authorization_url) {
         try { localStorage.setItem('ps_ref', data.reference || ''); } catch {}
         window.location.href = data.authorization_url;
       } else {
         setToast({ text: data?.error || 'Unable to initialize payment.', type: 'error' });
       }
-    } catch {
-      setToast({ text: 'Payment init failed. Please try again.', type: 'error' });
+    } catch (e) {
+      setToast({ text: `Payment init failed: ${e?.message || e}`, type: 'error' });
     } finally {
       setFunding(false);
     }
   };
 
-  // Search filtering for the service picker
+  // Service picker filter
   const filtered = useMemo(() => {
     const term = (search || '').toLowerCase();
     const list = services || [];
     if (!term) return list.slice(0, 20);
-    return list.filter(s => (s.name + ' ' + s.category).toLowerCase().includes(term)).slice(0, 30);
+    return list
+      .filter(s => (s.name + ' ' + s.category).toLowerCase().includes(term))
+      .slice(0, 30);
   }, [search, services]);
 
   // Close dropdown on outside click
@@ -240,7 +249,7 @@ export default function Dashboard() {
   }
 
   const by = counts.byStatus || {};
-  const serviceLabel = (o) => o.serviceName || serviceNameById.get(String(o.service)) || o.service;
+  const serviceLabel = (sid) => serviceNameById.get(String(sid)) || sid;
 
   return (
     <>
@@ -357,18 +366,18 @@ export default function Dashboard() {
                     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                     body: JSON.stringify(order),
                   });
-                  const data = await res.json();
+                  const data = await res.json().catch(()=> ({}));
                   if (res.ok) {
                     setToast({ text: `Order placed #${data.orderId}`, type: 'success' });
                     setOrder({ service: '', link: '', quantity: '' });
                     setSearch('');
                     await refreshOrders();
-                    await refreshHistory(); // reflect debit
+                    await refreshHistory();
                   } else {
                     setToast({ text: data?.error || 'Failed to place order.', type: 'error' });
                   }
-                } catch {
-                  setToast({ text: 'Order request failed.', type: 'error' });
+                } catch (err) {
+                  setToast({ text: `Order request failed: ${err?.message || err}`, type: 'error' });
                 }
               }}>Order</button>
             </div>
@@ -433,7 +442,7 @@ export default function Dashboard() {
                   {orders.map((o) => (
                     <tr key={o.id} className="border-b border-gray-100 dark:border-gray-900">
                       <td className="py-2 pr-4">{o.id}</td>
-                      <td className="py-2 pr-4">{serviceLabel(o)}</td>
+                      <td className="py-2 pr-4">{serviceLabel(o.service)}</td>
                       <td className="py-2 pr-4">{o.quantity}</td>
                       <td className="py-2 pr-4">₦{Number(o.priceNGN || 0).toLocaleString()}</td>
                       <td className="py-2 pr-4 capitalize">{o.status}</td>
@@ -463,7 +472,7 @@ export default function Dashboard() {
                   <tr className="text-left border-b border-gray-200 dark:border-gray-800">
                     <th className="py-2 pr-4">Type</th>
                     <th className="py-2 pr-4">Title</th>
-                    <th className="py-2 pr-4">Amount</                    </th>
+                    <th className="py-2 pr-4">Amount</th>
                     <th className="py-2 pr-4">Ref/Order</th>
                     <th className="py-2 pr-4">Date</th>
                   </tr>
