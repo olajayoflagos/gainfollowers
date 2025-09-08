@@ -1,3 +1,4 @@
+// app/dashboard/page.js
 'use client';
 
 import Link from 'next/link';
@@ -17,7 +18,6 @@ function Spinner({ label = 'Loading…' }) {
     </div>
   );
 }
-
 function Toast({ text, type }) {
   if (!text) return null;
   const base = 'fixed z-30 bottom-4 left-1/2 -translate-x-1/2 rounded-lg px-4 py-2 shadow-lg';
@@ -30,23 +30,6 @@ function Toast({ text, type }) {
   return <div className={`${base} ${tone}`}>{text}</div>;
 }
 
-// format Firestore Timestamp or string/Date-ish safely
-const fmtDateTime = (v) => {
-  try {
-    if (!v) return '-';
-    if (v?.seconds) return new Date(v.seconds * 1000).toLocaleString();
-    if (typeof v === 'string') {
-      const s = v.includes('T') ? v.slice(0, 19).replace('T', ' ') : v;
-      const d = new Date(v);
-      return Number.isNaN(+d) ? s : d.toLocaleString();
-    }
-    const d = new Date(v);
-    return Number.isNaN(+d) ? '-' : d.toLocaleString();
-  } catch {
-    return '-';
-  }
-};
-
 export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [loadingBoot, setLoadingBoot] = useState(true);
@@ -54,7 +37,7 @@ export default function Dashboard() {
   const [wallet, setWallet] = useState(0);
   const [services, setServices] = useState([]);
   const [transactions, setTransactions] = useState([]);
-  const [loadingTx, setLoadingTx] = useState(true);
+  const [loadingTx, setLoadingTx] = useState(false);
 
   const [amount, setAmount] = useState('');
   const [funding, setFunding] = useState(false);
@@ -65,7 +48,7 @@ export default function Dashboard() {
   const [toast, setToast] = useState({ text: '', type: 'info' });
 
   const [orders, setOrders] = useState([]);
-  const [loadingOrders, setLoadingOrders] = useState(true);
+  const [loadingOrders, setLoadingOrders] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextCursor, setNextCursor] = useState(null);
   const [counts, setCounts] = useState({ total: 0, byStatus: {} });
@@ -75,7 +58,7 @@ export default function Dashboard() {
   const listRef = useRef(null);
   const inputRef = useRef(null);
 
-  // map serviceId -> name
+  // map serviceId -> name for nicer table cells
   const serviceNameById = useMemo(() => {
     const map = new Map();
     for (const s of services || []) map.set(String(s.service), s.name);
@@ -95,7 +78,7 @@ export default function Dashboard() {
   };
   useEffect(() => setEstimate(computeEstimate(order.service, order.quantity)), [order, services]);
 
-  // --- Boot: auth + initial fetches (NO auto-refresh timers) ---
+  // --- Boot: auth + fetch initial data (no auto-intervals) ---
   useEffect(() => {
     initFirebase();
     const auth = getAuth();
@@ -118,9 +101,8 @@ export default function Dashboard() {
         setLoadingBoot(false);
       }
 
-      // initial loads only
-      refreshOrders();
-      refreshHistory();
+      // initial data (manual refresh afterwards)
+      await Promise.all([refreshOrders(), refreshHistory()]);
     });
     return () => unsub();
   }, []);
@@ -228,7 +210,7 @@ export default function Dashboard() {
     }
   };
 
-  // Service picker filtering
+  // Search filtering for the service picker
   const filtered = useMemo(() => {
     const term = (search || '').toLowerCase();
     const list = services || [];
@@ -311,7 +293,12 @@ export default function Dashboard() {
 
         {/* Place Order */}
         <section className="card p-5 md:p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
-          <h5 className="font-semibold text-lg">Place an order</h5>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h5 className="font-semibold text-lg">Place an order</h5>
+            <button className="btn-outline" onClick={() => { setOrder({ service:'', link:'', quantity:'' }); setSearch(''); }}>
+              Clear form
+            </button>
+          </div>
 
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <div className="md:col-span-3">
@@ -366,7 +353,32 @@ export default function Dashboard() {
                 Estimated price:&nbsp;
                 <span className="font-semibold text-gray-800 dark:text-gray-100">₦{Number(estimate || 0).toLocaleString()}</span>
               </div>
-              <button className="btn-primary" onClick={placeOrder}>Order</button>
+              <button className="btn-primary" onClick={async (e) => {
+                e.preventDefault();
+                if (!order.service) return setToast({ text: 'Please select a service.', type: 'error' });
+                try {
+                  const cu = getAuth().currentUser;
+                  if (!cu) return setToast({ text: 'Please log in again.', type: 'error' });
+                  const token = await cu.getIdToken(true);
+                  const res = await fetch('/api/orders/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                    body: JSON.stringify(order),
+                  });
+                  const data = await res.json();
+                  if (res.ok) {
+                    setToast({ text: `Order placed #${data.orderId}`, type: 'success' });
+                    setOrder({ service: '', link: '', quantity: '' });
+                    setSearch('');
+                    await refreshOrders();
+                    await refreshHistory(); // reflect debit
+                  } else {
+                    setToast({ text: data?.error || 'Failed to place order.', type: 'error' });
+                  }
+                } catch {
+                  setToast({ text: 'Order request failed.', type: 'error' });
+                }
+              }}>Order</button>
             </div>
 
             {(() => {
@@ -433,7 +445,7 @@ export default function Dashboard() {
                       <td className="py-2 pr-4">{o.quantity}</td>
                       <td className="py-2 pr-4">₦{Number(o.priceNGN || 0).toLocaleString()}</td>
                       <td className="py-2 pr-4 capitalize">{o.status}</td>
-                      <td className="py-2 pr-4">{fmtDateTime(o.createdAt)}</td>
+                      <td className="py-2 pr-4">{(o.createdAt || '').slice(0, 19).replace('T', ' ')}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -473,7 +485,7 @@ export default function Dashboard() {
                         {t.type === 'credit' ? '+' : '-'} ₦{Number(t.amountNGN || 0).toLocaleString()}
                       </td>
                       <td className="py-2 pr-4">{t.reference || t.orderId || '-'}</td>
-                      <td className="py-2 pr-4">{fmtDateTime(t.createdAt)}</td>
+                      <td className="py-2 pr-4">{(t.createdAt || '').slice(0,19).replace('T',' ')}</td>
                     </tr>
                   ))}
                 </tbody>
