@@ -48,13 +48,23 @@ export default function Dashboard() {
 
   const [orders, setOrders] = useState([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [counts, setCounts] = useState({ total: 0, byStatus: {} });
 
   const [search, setSearch] = useState('');
   const [openList, setOpenList] = useState(false);
   const listRef = useRef(null);
   const inputRef = useRef(null);
 
-  // --- Estimate in NGN (client-only envs so build won't break) ---
+  // map serviceId -> name for nicer table cells
+  const serviceNameById = useMemo(() => {
+    const map = new Map();
+    for (const s of services || []) map.set(String(s.service), s.name);
+    return map;
+  }, [services]);
+
+  // --- Estimate in NGN ---
   const computeEstimate = (svcId, qty) => {
     if (!svcId || !qty) return 0;
     const svc = (services || []).find((s) => String(s.service) === String(svcId));
@@ -76,7 +86,7 @@ export default function Dashboard() {
       if (!u) { setLoadingBoot(false); return; }
 
       try {
-        const token = await u.getIdToken(true); // fresh id token
+        const token = await u.getIdToken(true);
         const [w, s] = await Promise.all([
           fetch('/api/user/me', { headers: { Authorization: `Bearer ${token}` } }).then(r=>r.json()),
           fetch('/api/jap/services').then(r=>r.json()),
@@ -90,27 +100,69 @@ export default function Dashboard() {
         setLoadingBoot(false);
       }
 
-      refreshOrders();
-      refreshHistory();
-      const id1 = setInterval(refreshOrders, 15000);
-      const id2 = setInterval(refreshHistory, 20000);
+      refreshOrders();  // initial orders load
+      refreshHistory(); // tx + balance
+      const id1 = setInterval(refreshOrders, 20000);
+      const id2 = setInterval(refreshHistory, 25000);
       return () => { clearInterval(id1); clearInterval(id2); };
     });
     return () => unsub();
   }, []);
 
+  // ---- Orders fetch (page 1) ----
   const refreshOrders = async () => {
     try {
       setLoadingOrders(true);
       const cu = getAuth().currentUser;
       if (!cu) return;
       const token = await cu.getIdToken(true);
-      const res = await fetch('/api/orders/my', { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch('/api/orders/my?limit=50', { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
+
+      if (!res.ok) {
+        setOrders([]);
+        setCounts({ total: 0, byStatus: {} });
+        setNextCursor(null);
+        if (data?.index_required) {
+          setToast({ text: 'Firestore index needed for orders. Open Admin to create it.', type: 'error' });
+        }
+        return;
+      }
+
       setOrders(Array.isArray(data?.items) ? data.items : []);
-    } finally { setLoadingOrders(false); }
+      setCounts({
+        total: Number(data?.counts?.total || (data?.items?.length || 0)),
+        byStatus: data?.counts?.byStatus || {},
+      });
+      setNextCursor(data?.page?.nextCursor || null);
+    } finally {
+      setLoadingOrders(false);
+    }
   };
 
+  // ---- Pagination (append) ----
+  const loadMoreOrders = async () => {
+    if (!nextCursor) return;
+    try {
+      setLoadingMore(true);
+      const cu = getAuth().currentUser;
+      if (!cu) return;
+      const token = await cu.getIdToken(true);
+      const res = await fetch(`/api/orders/my?limit=50&after=${encodeURIComponent(nextCursor)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok && Array.isArray(data?.items)) {
+        setOrders((prev) => [...prev, ...data.items]);
+        setNextCursor(data?.page?.nextCursor || null);
+        // counts should already represent total; no need to recompute here
+      }
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  // ---- Tx + balance ----
   const refreshHistory = async () => {
     try {
       setLoadingTx(true);
@@ -120,13 +172,13 @@ export default function Dashboard() {
       const res = await fetch('/api/wallet/history', { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       setTransactions(Array.isArray(data?.items) ? data.items : []);
-      // also refresh wallet balance so it reflects new credits
+      // refresh wallet balance
       const w = await fetch('/api/user/me', { headers: { Authorization: `Bearer ${token}` } }).then(r=>r.json());
       setWallet(Number(w?.balance || 0));
     } finally { setLoadingTx(false); }
   };
 
-  // --- Funding (with clear message if amount missing) ---
+  // --- Funding ---
   const fund = async () => {
     const amt = Number(amount);
     if (!amt || amt <= 0) {
@@ -138,7 +190,7 @@ export default function Dashboard() {
       const cu = getAuth().currentUser;
       if (!cu) { setToast({ text: 'Please log in again.', type: 'error' }); return; }
 
-      const token = await cu.getIdToken(true); // fresh token
+      const token = await cu.getIdToken(true);
       const callbackUrl = `${window.location.origin}/paystack/callback`;
 
       const res = await fetch('/api/paystack/initialize', {
@@ -161,35 +213,14 @@ export default function Dashboard() {
     }
   };
 
-  const placeOrder = async (e) => {
-    e.preventDefault();
-    if (!order.service) return setToast({ text: 'Please select a service.', type: 'error' });
-    try {
-      const cu = getAuth().currentUser;
-      if (!cu) return setToast({ text: 'Please log in again.', type: 'error' });
-      const token = await cu.getIdToken(true);
-      const res = await fetch('/api/orders/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(order),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setToast({ text: `Order placed #${data.orderId}`, type: 'success' });
-        setOrder({ service: '', link: '', quantity: '' });
-        setSearch('');
-        refreshOrders();
-        refreshHistory(); // show debit immediately
-      } else setToast({ text: data?.error || 'Failed to place order.', type: 'error' });
-    } catch { setToast({ text: 'Order request failed.', type: 'error' }); }
-  };
-
-  // Search filtering
+  // Search filtering for the service picker
   const filtered = useMemo(() => {
     const term = (search || '').toLowerCase();
     const list = services || [];
     if (!term) return list.slice(0, 20);
-    return list.filter(s => (s.name + ' ' + s.category).toLowerCase().includes(term)).slice(0, 30);
+    return list
+      .filter(s => (s.name + ' ' + s.category).toLowerCase().includes(term))
+      .slice(0, 30);
   }, [search, services]);
 
   // Close dropdown on outside click
@@ -217,6 +248,9 @@ export default function Dashboard() {
       </>
     );
   }
+
+  const by = counts.byStatus || {};
+  const serviceLabel = (sid) => serviceNameById.get(String(sid)) || sid;
 
   return (
     <>
@@ -336,9 +370,29 @@ export default function Dashboard() {
         {/* Orders */}
         <section className="card p-5 md:p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h5 className="font-semibold text-lg">Your recent orders</h5>
-            <button className="btn-outline" onClick={refreshOrders} disabled={loadingOrders}>Refresh</button>
+            <div className="flex items-center gap-3">
+              <h5 className="font-semibold text-lg">Your orders</h5>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-1">
+                  Total: <b>{counts.total}</b>
+                </span>
+                {Object.entries(by).map(([k, v]) => (
+                  <span key={k} className="inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-1 capitalize">
+                    {k}: <b>{v}</b>
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button className="btn-outline" onClick={refreshOrders} disabled={loadingOrders}>Refresh</button>
+              {nextCursor && (
+                <button className="btn-outline" onClick={loadMoreOrders} disabled={loadingMore}>
+                  {loadingMore ? 'Loading…' : 'Load more'}
+                </button>
+              )}
+            </div>
           </div>
+
           <div className="mt-3 overflow-x-auto">
             {loadingOrders ? (
               <Spinner label="Loading orders…" />
@@ -358,13 +412,15 @@ export default function Dashboard() {
                 </thead>
                 <tbody>
                   {orders.map((o) => (
-                    <tr key={o.orderId} className="border-b border-gray-100 dark:border-gray-900">
-                      <td className="py-2 pr-4">{o.orderId}</td>
-                      <td className="py-2 pr-4">{o.service}</td>
+                    <tr key={o.id} className="border-b border-gray-100 dark:border-gray-900">
+                      <td className="py-2 pr-4">{o.id}</td>
+                      <td className="py-2 pr-4">{serviceLabel(o.service)}</td>
                       <td className="py-2 pr-4">{o.quantity}</td>
                       <td className="py-2 pr-4">₦{Number(o.priceNGN || 0).toLocaleString()}</td>
                       <td className="py-2 pr-4 capitalize">{o.status}</td>
-                      <td className="py-2 pr-4">{o.createdAt?.slice(0, 19).replace('T', ' ')}</td>
+                      <td className="py-2 pr-4">
+                        {(o.createdAt || '').slice(0, 19).replace('T', ' ')}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -404,7 +460,7 @@ export default function Dashboard() {
                         {t.type === 'credit' ? '+' : '-'} ₦{Number(t.amountNGN || 0).toLocaleString()}
                       </td>
                       <td className="py-2 pr-4">{t.reference || t.orderId || '-'}</td>
-                      <td className="py-2 pr-4">{t.createdAt?.slice(0,19).replace('T',' ')}</td>
+                      <td className="py-2 pr-4">{(t.createdAt || '').slice(0,19).replace('T',' ')}</td>
                     </tr>
                   ))}
                 </tbody>
