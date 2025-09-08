@@ -34,19 +34,23 @@ export async function GET(req) {
 
     if (after) {
       const afterSnap = await col.doc(after).get();
-      if (afterSnap.exists) q = q.startAfter(afterSnap);  // ✅ snapshot-based cursor
+      if (afterSnap.exists) q = q.startAfter(afterSnap); // snapshot cursor
     }
 
     const snap = await q.get();
     const items = snap.docs.map(d => {
       const x = d.data();
-      // Coerce createdAt to ISO string for the UI (handles Timestamp or string)
       const ca = x.createdAt?.toDate ? x.createdAt.toDate().toISOString() : String(x.createdAt || '');
       const ua = x.updatedAt?.toDate ? x.updatedAt.toDate().toISOString() : String(x.updatedAt || '');
-      return { id: d.id, ...x, createdAt: ca, updatedAt: ua };
+      return {
+        id: d.id,
+        ...x,
+        createdAt: ca,
+        updatedAt: ua,
+      };
     });
 
-    // Counts (best-effort)
+    // Counts
     let totalCount = items.length;
     const byStatus = items.reduce((m, x) => {
       const s = String(x.status || 'unknown').toLowerCase();
