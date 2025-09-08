@@ -1,4 +1,3 @@
-// app/api/orders/my/route.js
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -16,6 +15,24 @@ function qp(req) {
     limit: Math.min(Math.max(Number(u.searchParams.get('limit') || 50), 1), 200),
     after: u.searchParams.get('after') || '',
   };
+}
+
+// Robust timestamp → ISO helper
+function tsToISO(t) {
+  if (!t) return '';
+  if (typeof t === 'string') return t;
+  if (t instanceof Date) return t.toISOString();
+  if (typeof t.toDate === 'function') return t.toDate().toISOString();      // Firestore Timestamp
+  if (typeof t.seconds === 'number') {                                       // { seconds, nanoseconds }
+    const ms = t.seconds * 1000 + Math.floor((t.nanoseconds || 0) / 1e6);
+    return new Date(ms).toISOString();
+  }
+  if (typeof t._seconds === 'number') {                                      // { _seconds, _nanoseconds }
+    const ms = t._seconds * 1000 + Math.floor((t._nanoseconds || 0) / 1e6);
+    return new Date(ms).toISOString();
+  }
+  // Fallback: stringify object
+  try { return new Date(t).toISOString(); } catch { return ''; }
 }
 
 export async function GET(req) {
@@ -40,9 +57,12 @@ export async function GET(req) {
     const snap = await q.get();
     const items = snap.docs.map(d => {
       const x = d.data();
-      const ca = x.createdAt?.toDate ? x.createdAt.toDate().toISOString() : String(x.createdAt || '');
-      const ua = x.updatedAt?.toDate ? x.updatedAt.toDate().toISOString() : String(x.updatedAt || '');
-      return { id: d.id, ...x, createdAt: ca, updatedAt: ua };
+      return {
+        id: d.id,
+        ...x,
+        createdAt: tsToISO(x.createdAt),
+        updatedAt: tsToISO(x.updatedAt),
+      };
     });
 
     // Counts (best-effort)
@@ -72,11 +92,14 @@ export async function GET(req) {
       const items = snap.docs
         .map(d => {
           const x = d.data();
-          const ca = x.createdAt?.toDate ? x.createdAt.toDate().toISOString() : String(x.createdAt || '');
-          const ua = x.updatedAt?.toDate ? x.updatedAt.toDate().toISOString() : String(x.updatedAt || '');
-          return { id: d.id, ...x, createdAt: ca, updatedAt: ua };
+          return {
+            id: d.id,
+            ...x,
+            createdAt: tsToISO(x.createdAt),
+            updatedAt: tsToISO(x.updatedAt),
+          };
         })
-        .sort((a,b) => b.createdAt.localeCompare(a.createdAt));
+        .sort((a,b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 
       const byStatus = items.reduce((m, x) => {
         const s = String(x.status || 'unknown').toLowerCase();
