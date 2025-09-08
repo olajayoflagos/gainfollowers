@@ -25,8 +25,9 @@ async function placeJapOrder({ service, link, quantity }) {
   form.set('link', String(link));
   form.set('quantity', String(quantity));
 
+  // 20s timeout
   const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), 10_000);
+  const t = setTimeout(() => ac.abort(), 20_000);
 
   let res, text, data;
   try {
@@ -38,7 +39,9 @@ async function placeJapOrder({ service, link, quantity }) {
     });
     text = await res.text();
     try { data = JSON.parse(text); } catch { data = null; }
-  } finally { clearTimeout(t); }
+  } finally {
+    clearTimeout(t);
+  }
 
   if (!res.ok || !data?.order) {
     const msg = (data && (data.error || data.message)) || text || `JAP order failed (${res.status})`;
@@ -51,7 +54,7 @@ async function placeJapOrder({ service, link, quantity }) {
 
 export async function POST(req) {
   try {
-    // ---- Auth ----
+    // Auth
     const idToken = getBearer(req);
     if (!idToken) return Response.json({ error: 'missing_token' }, { status: 401 });
 
@@ -59,14 +62,14 @@ export async function POST(req) {
     try { user = await verifyIdToken(idToken); }
     catch { return Response.json({ error: 'invalid_token' }, { status: 401 }); }
 
-    // ---- Input ----
+    // Input
     const { service, link, quantity } = await req.json();
     const qty = Number(quantity || 0);
     if (!service || !link || !qty) {
       return Response.json({ error: 'missing_fields' }, { status: 400 });
     }
 
-    // ---- Service & pricing (snapshot) ----
+    // Service & pricing
     const origin = new URL(req.url).origin;
     let svcList = [];
     try {
@@ -93,7 +96,7 @@ export async function POST(req) {
     const margin = Number(process.env.MARGIN_PERCENT || process.env.NEXT_PUBLIC_MARGIN_PERCENT || 20);
     const priceNGN = Math.ceil((rateUsdPer1k * (qty / 1000)) * usdNgn * (1 + margin / 100));
 
-    // ---- Reserve funds & create order (timestamps!) ----
+    // Reserve funds & create order with server timestamps
     const { orderId, balanceAfter } = await db().runTransaction(async (tx) => {
       const walletRef = db().collection('wallets').doc(user.uid);
       const wSnap = await tx.get(walletRef);
@@ -110,9 +113,6 @@ export async function POST(req) {
       tx.set(orderRef, {
         uid: user.uid,
         service: String(service),
-        serviceName: String(svc.name || ''),     // snapshot
-        category: String(svc.category || ''),    // snapshot
-        rateUsdPer1k,                            // snapshot
         link: String(link),
         quantity: qty,
         priceNGN,
@@ -137,7 +137,7 @@ export async function POST(req) {
       throw e;
     });
 
-    // ---- Call provider ----
+    // Provider call
     let japOrderId;
     try {
       japOrderId = await placeJapOrder({ service, link, quantity: qty });
@@ -164,7 +164,7 @@ export async function POST(req) {
       return Response.json({ error: 'jap_failed', detail: String(e?.message || e) }, { status: e.status || 502 });
     }
 
-    // ---- Mark success ----
+    // Mark success
     await db().collection('orders').doc(orderId).set({
       status: 'pending',
       japOrderId: String(japOrderId),
