@@ -41,10 +41,10 @@ export default function Home() {
                   Create free account
                 </Link>
                 <Link
-                  href="/services"
+                  href="/dashboard"
                   className="rounded-lg border border-gray-300 px-5 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-300 dark:border-gray-700 dark:text-gray-100 dark:hover:bg-gray-800"
                 >
-                  Browse services
+                  GoTo Dashboard
                 </Link>
               </div>
 
